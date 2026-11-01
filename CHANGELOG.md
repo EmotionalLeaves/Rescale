@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.7.1
+
+- Fixes "Download failed (HTTP 404)" for the Repair and Generative detail packs: v0.7.0 pointed at packs that weren't published yet, and its checksums don't match the published `models-v3` files. This build has the published checksums
+- Generated detail and Repair are unchanged
+
 ## v0.7.0
 
 Fills in what's missing: damage repair and generative detail.
