@@ -1,0 +1,12 @@
+Rescale makes small, compressed or old images bigger and sharper using Real-ESRGAN models that run entirely on your phone.
+
+• Photo and Anime/Art modes, 2× and 4×
+• Uses your GPU (Vulkan) when it can, with automatic CPU fallback
+• Handles very large outputs by streaming them to disk
+• Works in the background with a progress notification
+• Before/after comparison with zoom
+• Share any image to "Upscale with Rescale"
+
+No internet permission, no accounts, no ads, no tracking, no watermarks. Open source (GPL-3.0).
+
+Upscaling invents plausible detail. It doesn't recover what the original never captured.

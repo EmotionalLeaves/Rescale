@@ -1,0 +1,129 @@
+package app.rescale.engine.pipeline
+
+import android.app.ActivityManager
+import android.content.Context
+import android.net.Uri
+import android.os.SystemClock
+import app.rescale.core.model.Limits
+import app.rescale.core.model.Mode
+import app.rescale.core.model.Planner
+import app.rescale.engine.nativebridge.NativeStatus
+import app.rescale.engine.nativebridge.ProgressListener
+import java.io.File
+
+data class UpscaleRequest(val input: Uri, val mode: Mode, val scale: Int)
+
+sealed interface UpscaleOutcome {
+    data class Success(
+        val output: File,
+        val preview: File,
+        val width: Int,
+        val height: Int,
+        val backend: BackendKind,
+        val millis: Long,
+    ) : UpscaleOutcome
+
+    data object Cancelled : UpscaleOutcome
+    data class Failed(val message: String) : UpscaleOutcome
+}
+
+/** Interface the worker uses to stop a running job from another coroutine. */
+fun interface Cancellable {
+    fun cancel()
+}
+
+class Upscaler(private val context: Context, appVersion: Long) {
+    private val models = ModelStore(context)
+    val backends = BackendSelector(context, appVersion)
+
+    /**
+     * Blocking. Runs on the caller's thread; [onStarted] hands back a handle that can cancel
+     * between tiles.
+     */
+    fun run(
+        req: UpscaleRequest,
+        outDir: File,
+        onStarted: (Cancellable) -> Unit,
+        onProgress: (done: Int, total: Int) -> Unit,
+    ): UpscaleOutcome {
+        val info = try {
+            ImageLoader.info(context, req.input)
+        } catch (e: Exception) {
+            return UpscaleOutcome.Failed(e.message ?: "Can't read this image")
+        }
+        if (info.width.toLong() * info.height > Limits.MAX_INPUT_PIXELS) {
+            return UpscaleOutcome.Failed("Input is larger than ${Limits.MAX_INPUT_PIXELS / 1_000_000} MP")
+        }
+
+        val plan = Planner.plan(req.mode, req.scale)
+        val outW = info.width.toLong() * req.scale
+        val outH = info.height.toLong() * req.scale
+        val needBytes = outW * outH * 3 / 2 + (64L shl 20)
+        if (outDir.apply { mkdirs() }.usableSpace < needBytes) {
+            return UpscaleOutcome.Failed("Not enough free storage (need about ${needBytes shr 20} MB)")
+        }
+
+        val (param, bin) = models.install(plan.model)
+        val session = try {
+            backends.open(plan.model, param, bin)
+        } catch (e: Exception) {
+            return UpscaleOutcome.Failed(e.message ?: "Couldn't load the model")
+        }
+        val bitmap = try {
+            ImageLoader.decodeForEngine(context, req.input)
+        } catch (e: Throwable) {
+            session.close()
+            return UpscaleOutcome.Failed(if (e is OutOfMemoryError) "Not enough memory to open this image" else e.message ?: "Decode failed")
+        }
+
+        val output = File(outDir, "output.png")
+        val preview = File(outDir, "preview.png")
+        val started = SystemClock.elapsedRealtime()
+        val backend = if (session.usingGpu) BackendKind.VULKAN else BackendKind.CPU
+        val status = session.use { s ->
+            onStarted { s.cancel() }
+            s.upscale(
+                bitmap = bitmap,
+                exifOrientation = info.exifOrientation,
+                tile = if (s.usingGpu) GPU_TILE else CPU_TILE,
+                downsample = plan.downsample,
+                maxBandBytes = bandBudget(),
+                outPath = output.path,
+                previewPath = preview.path,
+                previewMax = PREVIEW_MAX,
+                listener = ProgressListener { d, t -> onProgress(d, t) },
+            )
+        }
+        bitmap.recycle()
+
+        return when (status) {
+            NativeStatus.OK -> UpscaleOutcome.Success(
+                output, preview, outW.toInt(), outH.toInt(), backend, SystemClock.elapsedRealtime() - started,
+            )
+            NativeStatus.CANCELLED -> {
+                output.delete(); preview.delete()
+                UpscaleOutcome.Cancelled
+            }
+            NativeStatus.WRITE_ERROR -> UpscaleOutcome.Failed("Couldn't write the output (storage full?)")
+            NativeStatus.BAD_INPUT -> UpscaleOutcome.Failed("Unsupported image format")
+            else -> {
+                // A model error on GPU usually means a driver problem: don't trust it again.
+                if (backend == BackendKind.VULKAN) backends.forceCpu = true
+                UpscaleOutcome.Failed("The model failed on this device (${backend.name}). Switched to CPU; please retry.")
+            }
+        }
+    }
+
+    /** Native memory for the blend band: an eighth of RAM, capped at 384 MB. */
+    private fun bandBudget(): Long {
+        val am = context.getSystemService(ActivityManager::class.java)
+        val mi = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        return (mi.totalMem / 8).coerceIn(48L shl 20, 384L shl 20)
+    }
+
+    companion object {
+        const val GPU_TILE = 192
+        const val CPU_TILE = 128
+        const val PREVIEW_MAX = 2048
+    }
+}

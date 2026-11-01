@@ -1,0 +1,29 @@
+name: Bug report
+description: Something crashes or doesn't work
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: Pixel 6, Android 15
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Rescale version
+      placeholder: v0.1.0 (arm64-v8a)
+  - type: textarea
+    id: log
+    attributes:
+      label: Log (optional)
+      description: "`adb logcat -s RescaleNative Rescale` output, if you have it"
+      render: text

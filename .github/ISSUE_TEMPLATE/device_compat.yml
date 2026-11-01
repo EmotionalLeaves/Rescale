@@ -1,0 +1,18 @@
+name: Device compatibility
+description: Black/garbage output, crashes on a specific phone, or speed reports
+labels: [device]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device, SoC and Android version
+      placeholder: Galaxy A14, Helio G80, Android 14
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens?
+      description: Does "Use CPU only" (⋮ menu) fix it? How long did a 4× upscale take and at what input size?
+    validations:
+      required: true

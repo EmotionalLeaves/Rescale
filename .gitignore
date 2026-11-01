@@ -1,0 +1,17 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+.cxx/
+.externalNativeBuild/
+captures/
+engine/native/third_party/
+keystore.properties
+tools/model-conversion/*.pth
+tools/model-conversion/.venv/
+__pycache__/
+# Private keystores; keystore/rescale-public.jks is intentionally public.
+*.jks
+!keystore/rescale-public.jks
