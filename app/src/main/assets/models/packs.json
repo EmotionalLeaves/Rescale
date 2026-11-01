@@ -58,8 +58,8 @@
     {
       "id": "repair",
       "url": "https://github.com/EmotionalLeaves/Rescale/releases/download/models-v3/rescale-pack-repair.zip",
-      "size": 82905547,
-      "sha256": "feed074fbe91aafb203fce56f9c6c0a87fa68c95ef66429d90e2fac2c899a45e",
+      "size": 82991857,
+      "sha256": "61cb8d88522deb86b29868f4433a732250d1afd2c64996aae958c6507d463edd",
       "files": {
         "migan-512.bin": "5831787c13a6fa3bceab1f7faae5d77abf8a6e2d4de7a48f8c6bbbd0deb5a14c",
         "migan-512.param": "5dd5e023542db2b33005fd9b130e64d868987efed7ca140176a4569ed7e4c95a",
@@ -70,8 +70,8 @@
     {
       "id": "generative",
       "url": "https://github.com/EmotionalLeaves/Rescale/releases/download/models-v3/rescale-pack-generative.zip",
-      "size": 843932836,
-      "sha256": "8f2768f275827d5121f7eadf12e299405180f11b4f0f8118727c46de4f146c9c",
+      "size": 844780461,
+      "sha256": "d063ce0175025873d6233d0a226372c41d8d8e25e56e54f5cced5be36e83f5c9",
       "files": {
         "adcsr-x4.bin": "44353e1ad3d6e2fb488103b39866fbb9a02ff8a368f9851814c9d7dd9d4fc172",
         "adcsr-x4.param": "d2a80e9e823c2ac0c658eb18ec4d65b110a61c3f93e084cc17244fd3464319d3"
