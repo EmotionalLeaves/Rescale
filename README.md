@@ -7,11 +7,12 @@
 
 > **Honesty note:** upscaling *invents* plausible detail. It doesn't recover detail that was never captured. Don't treat results as evidence, especially faces and text.
 
-## Features (v0.5)
+## Features (v0.6)
 
 - **Auto** mode: analyses compression, noise, sharpness and content type, then picks the model and settings for you (and says what it picked)
 - **Photo** mode (Real-ESRGAN general-x4v3) and **Anime / Art** mode (Real-ESRGAN animevideov3), at 2×, 4×, 8×, 16× or 32× (chained passes with pre-blur and decaying detail)
-- Optional **model packs** (downloaded on request and SHA-256 verified, or imported from a zip): **De-JPEG** (FBCNN), **Denoise**, and **Pro** upscalers (Real-ESRGAN x4plus)
+- Optional **model packs** (downloaded on request and SHA-256 verified, or imported from a zip): **De-JPEG** (FBCNN), **Denoise**, **Face restore** (GFPGAN + RetinaFace), and **Pro** upscalers (Real-ESRGAN x4plus)
+- **Resumable**: long chains checkpoint each pass and continue after the app is killed
 - **GPU (Vulkan) via ncnn**, with automatic CPU fallback. On first use, a self-test compares GPU and CPU output and switches to CPU on devices whose drivers return garbage
 - **Tiled processing streamed to disk.** Outputs are written row band by row band straight into a PNG, so the full output is never held in memory. Tiles overlap and are cross-faded with Hann ramps, and borders are reflect-padded, so there are no seams (verified at < 1/255 vs whole-image inference)
 - **Detail slider** (faithful ↔ generated), **Match source colors** and **Keep original colors** controls to tame GAN artifacts
@@ -24,7 +25,7 @@
 - Save to `Pictures/Rescale`, or share. Rescale also appears in the share sheet ("Upscale with Rescale")
 - Respects EXIF orientation, keeps transparency (alpha is upscaled separately)
 
-Planned next (see [the outline](docs/outline.md)): face restoration, benchmark suite in CI, F-Droid.
+Planned next (see [the outline](docs/outline.md)): on-device testing across GPUs, F-Droid submission, then the "Future" list (video, custom models, NPU backends).
 
 ## Download
 
@@ -41,6 +42,7 @@ Requires Android 8.0+ (API 26). Vulkan is used where available.
 | De-JPEG (pack) | FBCNN color | 92 MB | Apache-2.0 |
 | Denoise (pack) | general-x4v3 + wdn blends | 4 MB | BSD-3-Clause |
 | Pro (packs) | RealESRGAN x4plus / x4plus anime 6B | 29 MB / 7 MB | BSD-3-Clause |
+| Faces (pack) | GFPGAN v1.4 + RetinaFace MobileNet-0.25 | 155 MB | Apache-2.0 / MIT |
 
 See [MODELS_LICENSES.md](MODELS_LICENSES.md). The Photo model was converted with [`tools/model-conversion`](tools/model-conversion) (PyTorch → pnnx → ncnn, 64 dB parity).
 

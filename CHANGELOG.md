@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.6.0
+
+Face restoration and resumable jobs.
+
+- **Face restore** pack (155 MB, `models-v2`): RetinaFace finds faces and GFPGAN v1.4 restores them. Each face is aligned to the FFHQ template, restored at 512², and feathered into the final output as it streams to disk. Strength slider, default 60%. Faces already larger than 400 px in the original are left alone
+- **Auto** turns on Faces when it finds small faces in a photo (and the pack is installed)
+- Detection uses GFPGAN's own 0.97 confidence threshold. A lower one painted a face onto a rocket in testing
+- An honest notice that restored faces are partly invented
+- GFPGAN's StyleGAN2 layers were rewritten into an exactly equivalent form that stays inside FP16 range on phone GPUs (76–78 dB vs the original)
+- **Resume after process death:** each finished pass of a chain is checkpointed, so if Android kills a long job, it picks up after the last completed pass instead of starting over
+- Existing packs stay on `models-v1`, so nothing needs re-downloading
+
 ## v0.5.0
 
 Export, batch, deep zoom and thermal management (build-order steps 14–16).
