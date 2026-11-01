@@ -21,6 +21,11 @@ class BackendSelector(context: Context, private val appVersion: Long) {
         get() = prefs.getBoolean("force_cpu", false)
         set(v) = prefs.edit().putBoolean("force_cpu", v).apply()
 
+    /** Gentle mode: 2 CPU threads, smaller tiles, a pause after each tile. Cooler, slower. */
+    var gentle: Boolean
+        get() = prefs.getBoolean("gentle", false)
+        set(v) = prefs.edit().putBoolean("gentle", v).apply()
+
     /** Applies a model's extra input / alignment to a freshly opened session. */
     private fun configure(s: NativeEngine.Session, spec: ModelSpec, extra: FloatArray?): NativeEngine.Session {
         if (spec.alignment > 1) s.setAlignment(spec.alignment)
@@ -29,7 +34,7 @@ class BackendSelector(context: Context, private val appVersion: Long) {
     }
 
     fun open(spec: ModelSpec, param: File, bin: File, extra: FloatArray? = null): NativeEngine.Session {
-        val threads = cpuThreads()
+        val threads = if (gentle) 2 else cpuThreads()
         val key = "gpu_ok_${spec.id}_$appVersion"
         val wantGpu = !forceCpu && NativeEngine.gpuCount() > 0 && prefs.getBoolean(key, true)
         if (wantGpu) {

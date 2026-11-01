@@ -22,11 +22,18 @@ import app.rescale.core.model.AutoPlanner
 import app.rescale.core.model.JobSettings
 import app.rescale.core.model.Stage
 import app.rescale.core.model.Tuning
+import app.rescale.engine.pipeline.ExportFormat
+import app.rescale.engine.pipeline.ExportOptions
+import app.rescale.engine.pipeline.Exported
+import app.rescale.engine.pipeline.Exporter
+import app.rescale.engine.pipeline.Gallery
 import app.rescale.engine.pipeline.ImageAnalyzer
 import app.rescale.engine.pipeline.PackStore
 import app.rescale.core.model.Packs
 import app.rescale.worker.PackDownload
 import app.rescale.worker.PackDownloadWorker
+import app.rescale.worker.BatchItem
+import app.rescale.worker.BatchWorker
 import kotlinx.coroutines.flow.combine
 import app.rescale.engine.pipeline.BackendSelector
 import app.rescale.engine.pipeline.ImageInfo
@@ -52,6 +59,7 @@ data class InputState(
     val info: ImageInfo,
     val thumbnail: Bitmap?,
     val analysis: Analysis? = null,
+    val displayName: String? = null,
 )
 
 data class EditorState(
@@ -74,6 +82,8 @@ data class EditorState(
     val after: Bitmap? = null,
     val message: String? = null,
     val forceCpu: Boolean = false,
+    val gentle: Boolean = false,
+    val exporting: Boolean = false,
 ) {
     val estimate: OutputEstimate? get() = input?.let { OutputEstimate.of(it.info.width, it.info.height, scale) }
     /** What Auto would pick now (re-evaluated when packs are installed). */
@@ -100,7 +110,9 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     private val backends = BackendSelector(app, BuildConfig.VERSION_CODE.toLong())
 
     private val packStore = PackStore(app)
-    private val _state = MutableStateFlow(EditorState(forceCpu = backends.forceCpu, installedPacks = packStore.installed()))
+    private val _state = MutableStateFlow(
+        EditorState(forceCpu = backends.forceCpu, gentle = backends.gentle, installedPacks = packStore.installed()),
+    )
     val state: StateFlow<EditorState> = _state.asStateFlow()
 
     val job: StateFlow<JobState> = UpscaleWorker.observe(app)
@@ -154,6 +166,37 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    val batch: StateFlow<List<BatchItem>> = BatchWorker.observe(app)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Copies the picked images into app storage and queues them (Auto settings per image). */
+    fun startBatch(uris: List<Uri>, scale: Int, export: ExportOptions, onlyWhileCharging: Boolean) {
+        exportOptions = export
+        viewModelScope.launch {
+            val inputs = withContext(Dispatchers.IO) {
+                val dir = File(ctx.filesDir, "batch-in").apply { mkdirs() }
+                uris.mapIndexedNotNull { i, uri ->
+                    runCatching {
+                        val name = ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "image-${i + 1}"
+                        val copy = File(dir, "${System.nanoTime()}-$i")
+                        ctx.contentResolver.openInputStream(uri)?.use { s -> copy.outputStream().use { s.copyTo(it) } }
+                            ?: error("unreadable")
+                        Uri.fromFile(copy) to name
+                    }.getOrNull()
+                }
+            }
+            BatchWorker.enqueue(ctx, inputs, scale, export, onlyWhileCharging)
+            val skipped = uris.size - inputs.size
+            _state.update {
+                it.copy(message = "Queued ${inputs.size} image(s)" + if (skipped > 0) ", skipped $skipped unreadable" else "")
+            }
+        }
+    }
+
+    fun cancelBatch() = BatchWorker.cancelAll(ctx)
+    fun clearBatch() = BatchWorker.clearFinished(ctx)
+
     fun setPro(v: Boolean) = _state.update { it.copy(pro = v, auto = false) }
     fun setFinishWithBicubic(v: Boolean) = _state.update { it.copy(finishWithBicubic = v) }
 
@@ -176,7 +219,11 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
                     val local = Uri.fromFile(copy)
                     val info = ImageLoader.info(ctx, local)
                     val analysis = ImageAnalyzer.analyze(ctx, local, info)
-                    InputState(local, info, ImageLoader.decodePreview(ctx, local, 1600), analysis)
+                    val name = runCatching {
+                        ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                    }.getOrNull()
+                    InputState(local, info, ImageLoader.decodePreview(ctx, local, 1600), analysis, name)
                 }
             }
             result.onSuccess { input ->
@@ -216,6 +263,11 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     fun dismissError() = _state.update { it.copy(error = null) }
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
+    fun setGentle(v: Boolean) {
+        backends.gentle = v
+        _state.update { it.copy(gentle = v) }
+    }
+
     fun setForceCpu(v: Boolean) {
         backends.forceCpu = v
         if (!v) backends.resetSelfTests()
@@ -239,7 +291,7 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     fun newImage() {
         UpscaleWorker.clear(ctx)
         loadedResultFor = null
-        _state.update { EditorState(forceCpu = it.forceCpu, installedPacks = it.installedPacks) }
+        _state.update { EditorState(forceCpu = it.forceCpu, gentle = it.gentle, installedPacks = it.installedPacks) }
     }
 
     private suspend fun loadResult(done: JobState.Done) {
@@ -259,61 +311,65 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun save(done: JobState.Done) {
+    private val exportPrefs = app.getSharedPreferences("export", android.content.Context.MODE_PRIVATE)
+
+    var exportOptions: ExportOptions
+        get() = ExportOptions(
+            format = ExportFormat.entries.find { it.name == exportPrefs.getString("format", null) } ?: ExportFormat.PNG,
+            quality = exportPrefs.getInt("quality", 92),
+            webpLossless = exportPrefs.getBoolean("lossless", false),
+            keepExif = exportPrefs.getBoolean("exif", true),
+        )
+        set(o) = exportPrefs.edit().putString("format", o.format.name).putInt("quality", o.quality)
+            .putBoolean("lossless", o.webpLossless).putBoolean("exif", o.keepExif).apply()
+
+    private fun baseName(done: JobState.Done): String {
+        val stem = Gallery.stem(state.value.input?.displayName)
+            ?: "Rescale_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        return "${stem}_${done.width}x${done.height}"
+    }
+
+    private fun exportFile(done: JobState.Done, opts: ExportOptions): Exported {
+        exportOptions = opts
+        val dir = File(ctx.cacheDir, "export").apply { deleteRecursively(); mkdirs() }
+        return Exporter.export(ctx, done.output, done.input, opts, dir, baseName(done))
+    }
+
+    fun save(done: JobState.Done, opts: ExportOptions) {
+        _state.update { it.copy(exporting = true) }
         viewModelScope.launch {
             val msg = withContext(Dispatchers.IO) {
-                runCatching { saveToGallery(done) }.fold(
-                    onSuccess = { "Saved to Pictures/Rescale" },
-                    onFailure = { "Couldn't save: ${it.message}" },
+                runCatching {
+                    val e = exportFile(done, opts)
+                    saveToGallery(e)
+                    e.note ?: "Saved to Pictures/Rescale as ${e.format.label}"
+                }.getOrElse { "Couldn't save: ${it.message}" }
+            }
+            _state.update { it.copy(message = msg, exporting = false) }
+        }
+    }
+
+    /** Exports with [opts] and hands back a share intent (or null with a message on failure). */
+    fun share(done: JobState.Done, opts: ExportOptions, launch: (Intent) -> Unit) {
+        _state.update { it.copy(exporting = true) }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { exportFile(done, opts) } }
+            _state.update { it.copy(exporting = false, message = result.exceptionOrNull()?.let { "Couldn't export: ${it.message}" }) }
+            result.getOrNull()?.let { e ->
+                val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", e.file)
+                launch(
+                    Intent.createChooser(
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = e.format.mime
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        },
+                        "Share upscaled image",
+                    ),
                 )
             }
-            _state.update { it.copy(message = msg) }
         }
     }
 
-    private fun fileName(done: JobState.Done): String {
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        return "Rescale_${stamp}_${done.width}x${done.height}.png"
-    }
-
-    private fun saveToGallery(done: JobState.Done) {
-        val name = fileName(done)
-        if (Build.VERSION.SDK_INT >= 29) {
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, name)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Rescale")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            }
-            val resolver = ctx.contentResolver
-            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                ?: error("MediaStore refused the file")
-            try {
-                resolver.openOutputStream(uri)?.use { out -> done.output.inputStream().use { it.copyTo(out) } }
-                    ?: error("Can't write to gallery")
-                values.clear()
-                values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-            } catch (e: Exception) {
-                resolver.delete(uri, null, null)
-                throw e
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Rescale")
-            dir.mkdirs()
-            val target = File(dir, name)
-            done.output.copyTo(target, overwrite = true)
-            MediaScannerConnection.scanFile(ctx, arrayOf(target.path), arrayOf("image/png"), null)
-        }
-    }
-
-    fun shareIntent(done: JobState.Done): Intent {
-        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", done.output)
-        return Intent(Intent.ACTION_SEND).apply {
-            type = "image/png"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }.let { Intent.createChooser(it, "Share upscaled image") }
-    }
+    private fun saveToGallery(e: Exported) = Gallery.save(ctx, e)
 }

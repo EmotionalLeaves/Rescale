@@ -9,6 +9,7 @@
 #include <string>
 
 #include "core/chain.h"
+#include "core/transcode.h"
 #include "core/engine.h"
 #include "core/sinks.h"
 #include "ncnn_runner.h"
@@ -109,6 +110,12 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeSetExtraInput(JNIEnv* en
     std::vector<float> v(env->GetArrayLength(values));
     env->GetFloatArrayRegion(values, 0, static_cast<jsize>(v.size()), v.data());
     if (from(handle)->ncnn) from(handle)->ncnn->setExtraInput(str(env, blob), std::move(v));
+}
+
+JNIEXPORT jboolean JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativePngToJpeg(JNIEnv* env, jobject, jstring png, jstring jpg,
+                                                                  jint quality) {
+    return pngToJpeg(str(env, png), str(env, jpg), quality);
 }
 
 JNIEXPORT void JNICALL

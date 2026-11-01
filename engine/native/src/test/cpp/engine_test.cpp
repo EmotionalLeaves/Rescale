@@ -14,6 +14,7 @@
 #include <zlib.h>
 
 #include "chain.h"
+#include "transcode.h"
 #include "engine.h"
 #include "sinks.h"
 #include "tiler.h"
@@ -408,6 +409,47 @@ static void testFitTile() {
     CHECK(16000LL * t * 4 * 12 <= (64LL << 20) || t == 32);
 }
 
+static void testPngReaderAndJpeg(const char* dir) {
+    for (int c : {3, 4}) {
+        const int w = 123, h = 77;
+        auto px = makeImage(w, h, true, c == 4);
+        const std::string png = std::string(dir) + "/rt" + std::to_string(c) + ".png";
+        {
+            PngWriter wr(png, w, h, c);
+            std::vector<uint8_t> row(w * c);
+            for (int y = 0; y < h; ++y) {
+                for (int x = 0; x < w; ++x) std::memcpy(&row[x * c], &px[(y * w + x) * 4], c);
+                CHECK(wr.push(row.data()));
+            }
+            CHECK(wr.finish());
+        }
+        PngReader rd(png);
+        CHECK(rd.ok() && rd.width() == w && rd.height() == h && rd.channels() == c);
+        int mismatches = 0;
+        for (int y = 0; y < h; ++y) {
+            const uint8_t* row = rd.next();
+            CHECK(row != nullptr);
+            if (!row) break;
+            for (int x = 0; x < w; ++x)
+                for (int k = 0; k < c; ++k) mismatches += row[x * c + k] != px[(y * w + x) * 4 + k];
+        }
+        CHECK(mismatches == 0);
+        CHECK(rd.next() == nullptr);
+
+        const std::string jpg = std::string(dir) + "/rt" + std::to_string(c) + ".jpg";
+        CHECK(pngToJpeg(png, jpg, 90));
+        FILE* f = std::fopen(jpg.c_str(), "rb");
+        CHECK(f != nullptr);
+        if (f) {
+            std::vector<uint8_t> b(1 << 20);
+            const size_t n = std::fread(b.data(), 1, b.size(), f);
+            std::fclose(f);
+            CHECK(n > 500 && b[0] == 0xFF && b[1] == 0xD8 && b[n - 2] == 0xFF && b[n - 1] == 0xD9);
+        }
+    }
+    CHECK(!PngReader(std::string(dir) + "/does-not-exist.png").ok());
+}
+
 int main(int argc, char** argv) {
     const char* tmp = argc > 1 ? argv[1] : ".";
     testPlanAxis();
@@ -427,6 +469,7 @@ int main(int argc, char** argv) {
     testLumaOnly();
     testChain(tmp);
     testFitTile();
+    testPngReaderAndJpeg(tmp);
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

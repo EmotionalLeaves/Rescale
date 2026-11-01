@@ -7,7 +7,7 @@
 
 > **Honesty note:** upscaling *invents* plausible detail. It doesn't recover detail that was never captured. Don't treat results as evidence, especially faces and text.
 
-## Features (v0.4)
+## Features (v0.5)
 
 - **Auto** mode: analyses compression, noise, sharpness and content type, then picks the model and settings for you (and says what it picked)
 - **Photo** mode (Real-ESRGAN general-x4v3) and **Anime / Art** mode (Real-ESRGAN animevideov3), at 2×, 4×, 8×, 16× or 32× (chained passes with pre-blur and decaying detail)
@@ -17,10 +17,14 @@
 - **Detail slider** (faithful ↔ generated), **Match source colors** and **Keep original colors** controls to tame GAN artifacts
 - Runs in the **background** with a progress notification (tile *i/N*, ETA, Cancel)
 - **Before/after viewer** with draggable divider, synced pinch-zoom and pan, and double-tap zoom
+- Export as **PNG, JPEG or WebP** (streaming JPEG for huge images), keeping camera EXIF if you want. Location is always stripped
+- **Batch queue**: many images, Auto settings each, saved straight to the gallery
+- **Deep zoom** into the full-resolution result, plus a 1:1 pixel view
+- **Thermal management** and a Gentle mode for long jobs
 - Save to `Pictures/Rescale`, or share. Rescale also appears in the share sheet ("Upscale with Rescale")
 - Respects EXIF orientation, keeps transparency (alpha is upscaled separately)
 
-Planned next (see [the outline](docs/outline.md)): face restoration, deep-zoom compare, batch queue, JPEG/WebP export, thermal management.
+Planned next (see [the outline](docs/outline.md)): face restoration, benchmark suite in CI, F-Droid.
 
 ## Download
 

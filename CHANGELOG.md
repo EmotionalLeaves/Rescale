@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.5.0
+
+Export, batch, deep zoom and thermal management (build-order steps 14–16).
+
+- **Export formats:** PNG, JPEG (streaming encoder, any size up to 65,535 px, without loading the image into memory) and WebP (lossy or lossless, up to 16,383 px). Pick a format and quality when you tap Save or Share
+- **EXIF:** "Keep camera info" copies camera, date and exposure details from the original. **Location is always removed**
+- Saved files are named after the original ("IMG_1234_4032x3024.jpg")
+- **Batch queue:** pick up to 50 images. Each gets its own Auto settings (or a fixed 2×/4×/8×), runs in the background one after another, and is saved to Pictures/Rescale. Optional "only while charging". A failed image doesn't stop the rest
+- **Deep zoom:** zooming past the preview decodes the visible region from the full-resolution result, and the **1:1** button shows real output pixels
+- **Thermal management:** pauses between tiles when the phone runs hot (thermal status and headroom) or the battery is under 20% and not charging. The notification says "Cooling down"
+- **Gentle mode** (menu): 2 threads, smaller tiles and short pauses, for long jobs without a hot phone
+- ETA now uses a moving average of tile times, so it adapts when throttling starts
+
 ## v0.4.0
 
 Model packs, restoration stages and chained passes (build-order steps 11–13).

@@ -23,6 +23,8 @@ import app.rescale.core.model.Mode
 import app.rescale.core.model.Stage
 import app.rescale.core.model.Tuning
 import app.rescale.engine.pipeline.Cancellable
+import app.rescale.engine.pipeline.EtaEstimator
+import app.rescale.engine.pipeline.Throttle
 import app.rescale.engine.pipeline.UpscaleOutcome
 import app.rescale.engine.pipeline.UpscaleRequest
 import app.rescale.engine.pipeline.Upscaler
@@ -78,6 +80,8 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         val upscaler = Upscaler(applicationContext, appVersion)
         val canceller = AtomicReference<Cancellable?>(null)
         startedAt = SystemClock.elapsedRealtime()
+        throttle = Throttle(applicationContext, upscaler.backends.gentle)
+        eta.start()
 
         val outcome = coroutineScope {
             // If WorkManager stops us (user tapped Cancel), flip the native cancel flag.
@@ -115,15 +119,19 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         }
     }
 
+    private var throttle: Throttle? = null
+    private val eta = EtaEstimator()
+
     private fun reportProgress(done: Int, total: Int) {
-        val elapsed = SystemClock.elapsedRealtime() - startedAt
-        val eta = if (done > 0) (elapsed * (total - done) / done) / 1000 else null
+        val eta = eta.update(done, total)
         setProgressAsync(workDataOf(KEY_DONE to done, KEY_TOTAL to total, KEY_ETA to (eta ?: -1L)))
         val now = SystemClock.elapsedRealtime()
         if (now - lastNotify > 700 || done == total) {
             lastNotify = now
             notifications.notify(NOTIFICATION_ID, buildNotification(done, total, eta))
         }
+        // Runs on the engine thread: sleeping here paces the next tile.
+        throttle?.afterTile()
     }
 
     private fun foregroundInfo(done: Int, total: Int, eta: Long?): ForegroundInfo {
@@ -141,7 +149,8 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             .setContentTitle("Upscaling")
             .setContentText(
                 if (total == 0) "Preparing…"
-                else "Tile $done of $total" + (eta?.let { " · ${formatEta(it)} left" } ?: ""),
+                else (if (throttle?.cooling == true) "Cooling down · " else "") +
+                    "Tile $done of $total" + (eta?.let { " · ${formatEta(it)} left" } ?: ""),
             )
             .setProgress(total, done, total == 0)
             .setOngoing(true)

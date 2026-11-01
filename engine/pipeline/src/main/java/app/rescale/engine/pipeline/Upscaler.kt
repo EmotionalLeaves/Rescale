@@ -89,7 +89,11 @@ class Upscaler(private val context: Context, appVersion: Long) {
                 }.also { sessions += it }
                 NativeEngine.Pass(
                     session = s,
-                    tile = if (s.usingGpu) p.model.tile else minOf(p.model.tile, CPU_TILE),
+                    tile = when {
+                        backends.gentle -> minOf(p.model.tile, GENTLE_TILE)
+                        s.usingGpu -> p.model.tile
+                        else -> minOf(p.model.tile, CPU_TILE)
+                    },
                     pad = p.model.pad,
                     downsample = p.downsample,
                     post = PostOptions(p.tuning.detail, p.tuning.lumaOnly, p.tuning.colorFix, p.preBlur),
@@ -162,6 +166,7 @@ class Upscaler(private val context: Context, appVersion: Long) {
 
     companion object {
         const val CPU_TILE = 128
+        const val GENTLE_TILE = 96
         const val PREVIEW_MAX = 2048
     }
 }

@@ -97,6 +97,9 @@ object NativeEngine {
         bitmap, exifOrientation, maxBandBytes, tmpDir, outPath, previewPath, previewMax, listener,
     )
 
+    /** Streams a PNG into a baseline JPEG (alpha over white). Works for any size up to 65535 px. */
+    fun pngToJpeg(png: String, jpeg: String, quality: Int): Boolean = nativePngToJpeg(png, jpeg, quality)
+
     /** A plain bicubic "model" (no network), to finish long chains without invented detail. */
     fun openBicubic(scale: Int): Session = Session(nativeCreateBicubic(scale))
 
@@ -123,6 +126,7 @@ object NativeEngine {
     @JvmStatic private external fun nativeCancel(handle: Long)
     @JvmStatic private external fun nativeProbe(handle: Long): FloatArray?
     @JvmStatic private external fun nativeCreateBicubic(scale: Int): Long
+    @JvmStatic private external fun nativePngToJpeg(png: String, jpeg: String, quality: Int): Boolean
     @JvmStatic private external fun nativeSetExtraInput(handle: Long, blob: String, values: FloatArray)
     @JvmStatic private external fun nativeSetAlignment(handle: Long, align: Int)
     @JvmStatic private external fun nativeRunChain(

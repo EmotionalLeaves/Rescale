@@ -60,6 +60,10 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+## Other third-party code
+
+- `engine/native/src/main/cpp/third_party/jpge`: jpge JPEG encoder by Rich Geldreich, public domain (or Apache-2.0)
+
 ## Runtime
 
 ncnn (Tencent), BSD-3-Clause. Its prebuilt Android libraries also contain glslang (BSD-3-Clause / Apache-2.0 components).

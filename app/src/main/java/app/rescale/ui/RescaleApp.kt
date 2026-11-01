@@ -37,7 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.rescale.RescaleViewModel
 import app.rescale.worker.JobState
 
-private enum class Screen { Home, Editor, Running, Result, Models }
+private enum class Screen { Home, Editor, Running, Result, Models, Batch }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,9 +45,17 @@ fun RescaleApp(vm: RescaleViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     val job by vm.job.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val context = androidx.compose.ui.platform.LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
     var dialog by rememberSaveable { mutableStateOf<String?>(null) }
     var showModels by rememberSaveable { mutableStateOf(false) }
+    var showBatch by rememberSaveable { mutableStateOf(false) }
+    var batchPick by remember { mutableStateOf<List<android.net.Uri>>(emptyList()) }
+    val batchItems by vm.batch.collectAsStateWithLifecycle()
+    val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
+        if (uris.isNotEmpty()) batchPick = uris
+    }
+    val pickBatch = { multiPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     val packs by vm.packs.collectAsStateWithLifecycle()
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importPack(uri)
@@ -64,10 +72,11 @@ fun RescaleApp(vm: RescaleViewModel) {
         if (Build.VERSION.SDK_INT >= 33) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.start()
     }
 
-    BackHandler(enabled = showModels) { showModels = false }
+    BackHandler(enabled = showModels || showBatch) { showModels = false; showBatch = false }
 
     val screen = when {
         showModels -> Screen.Models
+        showBatch -> Screen.Batch
         job is JobState.Running -> Screen.Running
         job is JobState.Done && !state.resultDismissed -> Screen.Result
         state.input != null -> Screen.Editor
@@ -84,10 +93,18 @@ fun RescaleApp(vm: RescaleViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (screen == Screen.Models) "Model packs" else "Rescale") },
+                title = {
+                    Text(
+                        when (screen) {
+                            Screen.Models -> "Model packs"
+                            Screen.Batch -> "Batch"
+                            else -> "Rescale"
+                        },
+                    )
+                },
                 navigationIcon = {
-                    if (screen == Screen.Models) {
-                        IconButton(onClick = { showModels = false }) {
+                    if (screen == Screen.Models || screen == Screen.Batch) {
+                        IconButton(onClick = { showModels = false; showBatch = false }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close model packs")
                         }
                     } else if (screen == Screen.Editor) {
@@ -110,6 +127,14 @@ fun RescaleApp(vm: RescaleViewModel) {
                             trailingIcon = { Checkbox(checked = state.forceCpu, onCheckedChange = null) },
                             onClick = { vm.setForceCpu(!state.forceCpu) },
                         )
+                        DropdownMenuItem(
+                            text = { Text("Gentle mode (cooler, slower)") },
+                            trailingIcon = { Checkbox(checked = state.gentle, onCheckedChange = null) },
+                            onClick = { vm.setGentle(!state.gentle) },
+                        )
+                        DropdownMenuItem(text = { Text("Batch queue") }, onClick = {
+                            menuOpen = false; showBatch = true
+                        })
                         DropdownMenuItem(text = { Text("Model packs") }, onClick = {
                             menuOpen = false; showModels = true
                         })
@@ -131,6 +156,13 @@ fun RescaleApp(vm: RescaleViewModel) {
                     loading = state.loadingInput,
                     error = state.error ?: (job as? JobState.Failed)?.message,
                     onPick = pickImage,
+                    onBatch = pickBatch,
+                )
+                Screen.Batch -> BatchScreen(
+                    items = batchItems,
+                    onAdd = pickBatch,
+                    onCancel = vm::cancelBatch,
+                    onClear = vm::clearBatch,
                 )
                 Screen.Editor -> EditorScreen(
                     state = state,
@@ -146,6 +178,9 @@ fun RescaleApp(vm: RescaleViewModel) {
                     onPro = vm::setPro,
                     onOpenModels = { showModels = true },
                     onFinishBicubic = vm::setFinishWithBicubic,
+                    batchActive = batchItems.any {
+                        it.state == app.rescale.worker.BatchItem.State.QUEUED || it.state == app.rescale.worker.BatchItem.State.RUNNING
+                    },
                     onStart = start,
                     onDismissError = vm::dismissError,
                 )
@@ -162,12 +197,27 @@ fun RescaleApp(vm: RescaleViewModel) {
                     done = job as JobState.Done,
                     before = state.before,
                     after = state.after,
-                    onSave = { vm.save(job as JobState.Done) },
-                    shareIntent = { vm.shareIntent(job as JobState.Done) },
+                    exportOptions = vm.exportOptions,
+                    exporting = state.exporting,
+                    onSave = { vm.save(job as JobState.Done, it) },
+                    onShare = { vm.share(job as JobState.Done, it) { intent -> context.startActivity(intent) } },
                     onNew = vm::newImage,
                 )
             }
         }
+    }
+
+    if (batchPick.isNotEmpty()) {
+        BatchSetupSheet(
+            count = batchPick.size,
+            initialExport = vm.exportOptions,
+            onDismiss = { batchPick = emptyList() },
+            onStart = { scale, export, charging ->
+                vm.startBatch(batchPick, scale, export, charging)
+                batchPick = emptyList()
+                showBatch = true
+            },
+        )
     }
 
     when (dialog) {

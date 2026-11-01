@@ -17,6 +17,8 @@ add_library(rescale SHARED
     core/engine.cpp
     core/postprocess.cpp
     core/chain.cpp
+    core/transcode.cpp
+    third_party/jpge/jpge.cpp
     ncnn_runner.cpp
     jni_bridge.cpp)
 
