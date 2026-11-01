@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.0
+
+Sharper text.
+
+- New **Text** image type, for screenshots, documents, signs and scans
+- **Text** pack (32 MB, `models-v4`): RealESRNet x4plus, Real-ESRGAN's generator before GAN training. It sharpens letters without the made-up texture and ringing GAN models add around text. On a JPEG-compressed screenshot it beats every other model in the app (26.6 dB vs 25.2 for the Photo model, 21.8 for bicubic)
+- Without the pack, Text mode uses the built-in Photo model and offers the download
+
 ## v0.7.1
 
 - Fixes "Download failed (HTTP 404)" for the Repair and Generative detail packs: v0.7.0 pointed at packs that weren't published yet, and its checksums don't match the published `models-v3` files. This build has the published checksums
