@@ -36,3 +36,17 @@ class PlannerTest {
         assertEquals(8.0, e.megapixels, 1e-9)
     }
 }
+
+class TuningTest {
+    @Test fun defaultsPerMode() {
+        assertEquals(0.8f, Tuning.defaultFor(Mode.PHOTO).detail, 1e-6f)
+        assertEquals(1.0f, Tuning.defaultFor(Mode.ANIME).detail, 1e-6f)
+        assertEquals(true, Tuning.defaultFor(Mode.PHOTO).colorFix)
+        assertEquals(false, Tuning.defaultFor(Mode.PHOTO).lumaOnly)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsOutOfRangeDetail() {
+        Tuning(detail = 1.5f)
+    }
+}

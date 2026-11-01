@@ -14,6 +14,7 @@
    - Only one **band** (tile height × scale rows × output width, RGB float) lives in memory. When a tile row finishes, all rows above the next tile row are final and are pushed through the sink chain, and the band slides down. The tile size shrinks automatically to fit the memory budget.
    - Sink chain: `[BoxDownsample] → Tee → PngWriter (output)` and `→ BoxDownsample → PngWriter (≤ 2048 px preview)`.
    - `PngWriter` is a small streaming encoder (Paeth filter, zlib deflate), so there's no libpng dependency.
+   - **Per-tile post-processing** (`postprocess.cpp`, on the padded tile, before blending): the Detail blend with Keys bicubic, luminance-only (model luma + bicubic chroma), and the colour fix (Gaussian-blurred difference between the input and the area-downscaled output, bilinearly upsampled and added back, like StableSR's colour fix).
    - Cancellation is an atomic flag checked between tiles. Progress is a JNI callback per tile.
 7. **Result.** The worker returns the paths. The UI shows the preview in the compare viewer, and Save copies the full PNG into MediaStore.
 

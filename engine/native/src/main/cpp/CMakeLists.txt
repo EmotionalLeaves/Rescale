@@ -15,6 +15,7 @@ add_library(rescale SHARED
     core/tiler.cpp
     core/sinks.cpp
     core/engine.cpp
+    core/postprocess.cpp
     ncnn_runner.cpp
     jni_bridge.cpp)
 

@@ -122,6 +122,9 @@ fun RescaleApp(vm: RescaleViewModel) {
                     onPick = pickImage,
                     onMode = vm::setMode,
                     onScale = vm::setScale,
+                    onDetail = vm::setDetail,
+                    onColorFix = vm::setColorFix,
+                    onLumaOnly = vm::setLumaOnly,
                     onStart = start,
                     onDismissError = vm::dismissError,
                 )

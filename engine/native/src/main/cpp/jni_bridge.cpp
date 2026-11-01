@@ -94,6 +94,7 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeProbe(JNIEnv* env, jobje
 JNIEXPORT jint JNICALL
 Java_app_rescale_engine_nativebridge_NativeEngine_nativeUpscale(JNIEnv* env, jobject, jlong handle, jobject bitmap,
                                                                 jint orientation, jint tile, jint downsample,
+                                                                jfloat detail, jboolean lumaOnly, jboolean colorFix,
                                                                 jlong maxBandBytes, jstring outPath,
                                                                 jstring previewPath, jint previewMax,
                                                                 jobject listener) {
@@ -119,6 +120,9 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeUpscale(JNIEnv* env, job
 
         EngineOptions opt;
         opt.tile = std::max(32, static_cast<int>(tile));
+        opt.post.detail = detail;
+        opt.post.lumaOnly = lumaOnly;
+        opt.post.colorFix = colorFix;
         // Band accumulator is OW * tile*s rows * 3 floats. Shrink the tile until it fits.
         while (opt.tile > 32 && static_cast<long long>(OW) * opt.tile * s * 12 > maxBandBytes) opt.tile -= 16;
 

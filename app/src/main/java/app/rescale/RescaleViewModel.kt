@@ -16,6 +16,7 @@ import androidx.lifecycle.viewModelScope
 import app.rescale.core.model.Limits
 import app.rescale.core.model.Mode
 import app.rescale.core.model.OutputEstimate
+import app.rescale.core.model.Tuning
 import app.rescale.engine.pipeline.BackendSelector
 import app.rescale.engine.pipeline.ImageInfo
 import app.rescale.engine.pipeline.ImageLoader
@@ -46,6 +47,7 @@ data class EditorState(
     val loadingInput: Boolean = false,
     val mode: Mode = Mode.PHOTO,
     val scale: Int = 4,
+    val tuning: Tuning = Tuning.defaultFor(Mode.PHOTO),
     val error: String? = null,
     val resultDismissed: Boolean = false,
     val before: Bitmap? = null,
@@ -102,7 +104,13 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setMode(mode: Mode) = _state.update { it.copy(mode = mode) }
+    fun setMode(mode: Mode) = _state.update {
+        // Switching mode resets Detail to that mode's default; the toggles stay as set.
+        it.copy(mode = mode, tuning = it.tuning.copy(detail = mode.defaultDetail))
+    }
+    fun setDetail(v: Float) = _state.update { it.copy(tuning = it.tuning.copy(detail = v.coerceIn(0f, 1f))) }
+    fun setColorFix(v: Boolean) = _state.update { it.copy(tuning = it.tuning.copy(colorFix = v)) }
+    fun setLumaOnly(v: Boolean) = _state.update { it.copy(tuning = it.tuning.copy(lumaOnly = v)) }
     fun setScale(scale: Int) = _state.update { it.copy(scale = scale) }
     fun dismissError() = _state.update { it.copy(error = null) }
     fun consumeMessage() = _state.update { it.copy(message = null) }
@@ -119,7 +127,7 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
         if (s.tooLarge) return
         _state.update { it.copy(resultDismissed = false, after = null, error = null) }
         loadedResultFor = null
-        UpscaleWorker.enqueue(ctx, input.uri, s.mode, s.scale)
+        UpscaleWorker.enqueue(ctx, input.uri, s.mode, s.scale, s.tuning)
     }
 
     fun cancel() = UpscaleWorker.cancel(ctx)

@@ -7,6 +7,13 @@ fun interface ProgressListener {
     fun onProgress(done: Int, total: Int)
 }
 
+/**
+ * Artifact controls. [detail]: 1 = pure model, 0 = pure bicubic. [lumaOnly]: keep the
+ * model's brightness but the source's colour. [colorFix]: pull large-scale colour and
+ * brightness back to the source.
+ */
+data class PostOptions(val detail: Float = 1f, val lumaOnly: Boolean = false, val colorFix: Boolean = false)
+
 /** Result codes from the native engine (mirror of rescale::Status). */
 object NativeStatus {
     const val OK = 0
@@ -41,13 +48,15 @@ object NativeEngine {
             exifOrientation: Int,
             tile: Int,
             downsample: Int,
+            post: PostOptions,
             maxBandBytes: Long,
             outPath: String,
             previewPath: String?,
             previewMax: Int,
             listener: ProgressListener?,
         ): Int = nativeUpscale(
-            handle, bitmap, exifOrientation, tile, downsample, maxBandBytes,
+            handle, bitmap, exifOrientation, tile, downsample,
+            post.detail, post.lumaOnly, post.colorFix, maxBandBytes,
             outPath, previewPath, previewMax, listener,
         )
 
@@ -82,7 +91,8 @@ object NativeEngine {
     @JvmStatic private external fun nativeCancel(handle: Long)
     @JvmStatic private external fun nativeProbe(handle: Long): FloatArray?
     @JvmStatic private external fun nativeUpscale(
-        handle: Long, bitmap: Bitmap, orientation: Int, tile: Int, downsample: Int, maxBandBytes: Long,
+        handle: Long, bitmap: Bitmap, orientation: Int, tile: Int, downsample: Int,
+        detail: Float, lumaOnly: Boolean, colorFix: Boolean, maxBandBytes: Long,
         outPath: String, previewPath: String?, previewMax: Int, listener: ProgressListener?,
     ): Int
 }

@@ -3,6 +3,7 @@
 // tiling, padding, blending and streaming are seamless and exact.
 //
 // Build: cmake -S engine/native/src/test/cpp -B build/host && cmake --build build/host && ctest --test-dir build/host
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -48,6 +49,24 @@ public:
 private:
     int s_;
     float bias_;
+};
+
+// Nearest upscale plus a constant per-channel offset (a model with colour drift).
+class ShiftRunner : public TileRunner {
+public:
+    ShiftRunner(int s, float r, float g, float b) : nn_(s), d_{r, g, b} {}
+    int scale() const override { return nn_.scale(); }
+    bool run(const std::vector<float>& in, int w, int h, std::vector<float>& out) override {
+        nn_.run(in, w, h, out);
+        const size_t plane = out.size() / 3;
+        for (int c = 0; c < 3; ++c)
+            for (size_t i = 0; i < plane; ++i) out[c * plane + i] += d_[c];
+        return true;
+    }
+
+private:
+    NearestRunner nn_;
+    float d_[3];
 };
 
 static std::vector<uint8_t> makeImage(int w, int h, bool gradient, bool alpha = false) {
@@ -251,6 +270,91 @@ static void testPngRoundTrip(const char* dir) {
     CHECK(mismatches == 0);
 }
 
+static std::vector<double> channelMeans(const std::vector<uint8_t>& px, int channels, int stride) {
+    std::vector<double> m(3, 0.0);
+    const size_t n = px.size() / stride;
+    for (size_t i = 0; i < n; ++i)
+        for (int c = 0; c < 3; ++c) m[c] += px[i * stride + c];
+    for (double& v : m) v /= n;
+    (void)channels;
+    return m;
+}
+
+static std::vector<uint8_t> runWith(const std::vector<uint8_t>& px, int w, int h, TileRunner& r,
+                                    const PostOptions& post) {
+    Image img(px.data(), w, h, w * 4);
+    MemorySink mem(w * r.scale(), 3);
+    EngineOptions opt;
+    opt.tile = 40;
+    opt.pad = 8;
+    opt.overlap = 12;
+    opt.post = post;
+    CHECK(upscale(img, r, opt, mem, nullptr, nullptr) == kOk);
+    return mem.data;
+}
+
+// Detail = 0 must reproduce a plain bicubic upscale (tiling included).
+static void testDetailZeroIsBicubic() {
+    const int w = 90, h = 70, s = 4;
+    auto px = makeImage(w, h, true);
+    NearestRunner nn(s);
+    PostOptions post;
+    post.detail = 0.f;
+    auto got = runWith(px, w, h, nn, post);
+
+    std::vector<float> planar(3 * w * h), ref;
+    for (int c = 0; c < 3; ++c)
+        for (int i = 0; i < w * h; ++i) planar[c * w * h + i] = px[i * 4 + c] / 255.f;
+    bicubicUpscale(planar, w, h, s, ref);
+    int worst = 0;
+    const int ow = w * s, oh = h * s;
+    for (int y = 8; y < oh - 8; ++y)  // borders: engine reflect-pads, reference clamps
+        for (int x = 8; x < ow - 8; ++x)
+            for (int c = 0; c < 3; ++c) {
+                const int want = static_cast<int>(std::lround(std::clamp(ref[(c * oh + y) * ow + x], 0.f, 1.f) * 255));
+                worst = std::max(worst, std::abs(want - got[(y * ow + x) * 3 + c]));
+            }
+    if (worst > 1) std::fprintf(stderr, "  detail=0 worst=%d\n", worst);
+    CHECK(worst <= 1);
+}
+
+// Colour fix must cancel a model that drifts colours.
+static void testColorFix() {
+    const int w = 96, h = 64, s = 2;
+    auto px = makeImage(w, h, true);
+    const auto want = channelMeans(px, 3, 4);
+    ShiftRunner drift(s, 0.12f, 0.f, -0.08f);
+    auto raw = runWith(px, w, h, drift, PostOptions{});
+    PostOptions post;
+    post.colorFix = true;
+    ShiftRunner drift2(s, 0.12f, 0.f, -0.08f);
+    auto fixed = runWith(px, w, h, drift2, post);
+    const auto mr = channelMeans(raw, 3, 3), mf = channelMeans(fixed, 3, 3);
+    CHECK(std::fabs(mr[0] - want[0]) > 20);   // drift is visible without the fix
+    for (int c = 0; c < 3; ++c) {
+        if (std::fabs(mf[c] - want[c]) > 1.5) std::fprintf(stderr, "  colorfix c%d %.2f vs %.2f\n", c, mf[c], want[c]);
+        CHECK(std::fabs(mf[c] - want[c]) <= 1.5);
+    }
+}
+
+// Luminance-only must discard a chroma-only shift from the model.
+static void testLumaOnly() {
+    const int w = 80, h = 60, s = 2;
+    auto px = makeImage(w, h, true);
+    const auto want = channelMeans(px, 3, 4);
+    // +R, -B chosen so luma (0.299R + 0.587G + 0.114B) is unchanged.
+    const float dr = 0.1f, db = -0.1f * 0.299f / 0.114f;
+    ShiftRunner chroma(s, dr, 0.f, db);
+    PostOptions post;
+    post.lumaOnly = true;
+    auto got = runWith(px, w, h, chroma, post);
+    const auto m = channelMeans(got, 3, 3);
+    for (int c = 0; c < 3; ++c) {
+        if (std::fabs(m[c] - want[c]) > 1.5) std::fprintf(stderr, "  luma c%d %.2f vs %.2f\n", c, m[c], want[c]);
+        CHECK(std::fabs(m[c] - want[c]) <= 1.5);
+    }
+}
+
 int main(int argc, char** argv) {
     const char* tmp = argc > 1 ? argv[1] : ".";
     testPlanAxis();
@@ -265,6 +369,9 @@ int main(int argc, char** argv) {
     testAlphaAndDownsample();
     testCancel();
     testPngRoundTrip(tmp);
+    testDetailZeroIsBicubic();
+    testColorFix();
+    testLumaOnly();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

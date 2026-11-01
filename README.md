@@ -7,17 +7,18 @@
 
 > **Honesty note:** upscaling *invents* plausible detail. It doesn't recover detail that was never captured. Don't treat results as evidence, especially faces and text.
 
-## Features (v0.1)
+## Features (v0.2)
 
 - **Photo** mode (Real-ESRGAN general-x4v3) and **Anime / Art** mode (Real-ESRGAN animevideov3), at 2× or 4×
 - **GPU (Vulkan) via ncnn**, with automatic CPU fallback. On first use, a self-test compares GPU and CPU output and switches to CPU on devices whose drivers return garbage
 - **Tiled processing streamed to disk.** Outputs are written row band by row band straight into a PNG, so the full output is never held in memory. Tiles overlap and are cross-faded with Hann ramps, and borders are reflect-padded, so there are no seams (verified at < 1/255 vs whole-image inference)
+- **Detail slider** (faithful ↔ generated), **Match source colors** and **Keep original colors** controls to tame GAN artifacts
 - Runs in the **background** with a progress notification (tile *i/N*, ETA, Cancel)
 - **Before/after viewer** with draggable divider, synced pinch-zoom and pan, and double-tap zoom
 - Save to `Pictures/Rescale`, or share. Rescale also appears in the share sheet ("Upscale with Rescale")
 - Respects EXIF orientation, keeps transparency (alpha is upscaled separately)
 
-Planned next (see [the outline](docs/outline.md)): Auto mode, JPEG/noise/face restoration stages, Detail slider, chained 8×/16×+ passes, model packs, batch queue, JPEG/WebP export.
+Planned next (see [the outline](docs/outline.md)): Auto mode, JPEG/noise/face restoration stages, chained 8×/16×+ passes, model packs, batch queue, JPEG/WebP export.
 
 ## Download
 

@@ -7,11 +7,18 @@ import android.os.SystemClock
 import app.rescale.core.model.Limits
 import app.rescale.core.model.Mode
 import app.rescale.core.model.Planner
+import app.rescale.core.model.Tuning
 import app.rescale.engine.nativebridge.NativeStatus
+import app.rescale.engine.nativebridge.PostOptions
 import app.rescale.engine.nativebridge.ProgressListener
 import java.io.File
 
-data class UpscaleRequest(val input: Uri, val mode: Mode, val scale: Int)
+data class UpscaleRequest(
+    val input: Uri,
+    val mode: Mode,
+    val scale: Int,
+    val tuning: Tuning = Tuning.defaultFor(mode),
+)
 
 sealed interface UpscaleOutcome {
     data class Success(
@@ -87,6 +94,7 @@ class Upscaler(private val context: Context, appVersion: Long) {
                 exifOrientation = info.exifOrientation,
                 tile = if (s.usingGpu) GPU_TILE else CPU_TILE,
                 downsample = plan.downsample,
+                post = PostOptions(req.tuning.detail, req.tuning.lumaOnly, req.tuning.colorFix),
                 maxBandBytes = bandBudget(),
                 outPath = output.path,
                 previewPath = preview.path,

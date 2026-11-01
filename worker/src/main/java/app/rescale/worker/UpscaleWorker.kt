@@ -19,6 +19,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import app.rescale.core.model.Mode
+import app.rescale.core.model.Tuning
 import app.rescale.engine.pipeline.Cancellable
 import app.rescale.engine.pipeline.UpscaleOutcome
 import app.rescale.engine.pipeline.UpscaleRequest
@@ -63,6 +64,11 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         val input = inputData.getString(KEY_INPUT)?.let(Uri::parse) ?: return Result.failure()
         val mode = Mode.valueOf(inputData.getString(KEY_MODE) ?: Mode.PHOTO.name)
         val scale = inputData.getInt(KEY_SCALE, 4)
+        val tuning = Tuning(
+            detail = inputData.getFloat(KEY_DETAIL, mode.defaultDetail).coerceIn(0f, 1f),
+            colorFix = inputData.getBoolean(KEY_COLOR_FIX, true),
+            lumaOnly = inputData.getBoolean(KEY_LUMA_ONLY, false),
+        )
         val outDir = resultDir(applicationContext, id)
 
         ensureChannel()
@@ -83,7 +89,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             }
             val r = withContext(Dispatchers.Default) {
                 upscaler.run(
-                    UpscaleRequest(input, mode, scale),
+                    UpscaleRequest(input, mode, scale, tuning),
                     outDir,
                     onStarted = { canceller.set(it) },
                     onProgress = { d, t -> reportProgress(d, t) },
@@ -166,6 +172,9 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         const val KEY_INPUT = "input"
         const val KEY_MODE = "mode"
         const val KEY_SCALE = "scale"
+        const val KEY_DETAIL = "detail"
+        const val KEY_COLOR_FIX = "colorFix"
+        const val KEY_LUMA_ONLY = "lumaOnly"
         const val KEY_OUTPUT = "output"
         const val KEY_PREVIEW = "preview"
         const val KEY_WIDTH = "width"
@@ -184,11 +193,23 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         fun formatEta(seconds: Long): String =
             if (seconds >= 60) "${seconds / 60} min ${seconds % 60} s" else "$seconds s"
 
-        fun enqueue(context: Context, input: Uri, mode: Mode, scale: Int, onlyWhileCharging: Boolean = false) {
+        fun enqueue(
+            context: Context,
+            input: Uri,
+            mode: Mode,
+            scale: Int,
+            tuning: Tuning = Tuning.defaultFor(mode),
+            onlyWhileCharging: Boolean = false,
+        ) {
             // One job at a time (batch queue comes later): clear old results first.
             resultsRoot(context).deleteRecursively()
             val request = OneTimeWorkRequestBuilder<UpscaleWorker>()
-                .setInputData(workDataOf(KEY_INPUT to input.toString(), KEY_MODE to mode.name, KEY_SCALE to scale))
+                .setInputData(
+                    workDataOf(
+                        KEY_INPUT to input.toString(), KEY_MODE to mode.name, KEY_SCALE to scale,
+                        KEY_DETAIL to tuning.detail, KEY_COLOR_FIX to tuning.colorFix, KEY_LUMA_ONLY to tuning.lumaOnly,
+                    ),
+                )
                 .setConstraints(Constraints.Builder().setRequiresCharging(onlyWhileCharging).build())
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()

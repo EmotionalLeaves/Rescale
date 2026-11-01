@@ -7,6 +7,7 @@
 #include <functional>
 #include <vector>
 
+#include "postprocess.h"
 #include "sinks.h"
 
 namespace rescale {
@@ -38,6 +39,7 @@ struct EngineOptions {
     int tile = 128;       // input pixels per tile edge (before padding)
     int pad = 12;         // reflect-padded context per side, cropped away after inference
     int overlap = 16;     // minimum cross-faded overlap between neighbouring tiles
+    PostOptions post;     // detail blend, luminance-only, colour fix
 };
 
 enum Status : int {

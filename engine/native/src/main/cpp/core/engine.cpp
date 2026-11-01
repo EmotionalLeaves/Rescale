@@ -85,7 +85,7 @@ Status upscale(const Image& img, TileRunner& runner, const EngineOptions& opt, R
     int bandTop = 0;  // output row index of acc row 0
     int emitted = 0;  // rows already pushed to the sink
 
-    std::vector<float> in(static_cast<size_t>(3) * inW * inH), out;
+    std::vector<float> in(static_cast<size_t>(3) * inW * inH), out, scratch;
     std::vector<uint8_t> row(static_cast<size_t>(OW) * C);
 
     const int total = static_cast<int>(ax.starts.size() * ay.starts.size());
@@ -142,6 +142,7 @@ Status upscale(const Image& img, TileRunner& runner, const EngineOptions& opt, R
             const int ow = inW * s;
             const size_t oplane = static_cast<size_t>(ow) * inH * s;
             if (out.size() < 3 * oplane) return kModelError;
+            if (opt.post.active()) postProcessTile(in, inW, inH, s, opt.post, out, scratch);
 
             // Crop the padding away and accumulate weighted pixels into the band.
             const auto& wx = wxs[tx];

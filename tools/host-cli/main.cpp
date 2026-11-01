@@ -3,6 +3,7 @@
 //
 //   rescale_cli <model-base> <in-blob> <out-blob> <scale> <in.rgba> <w> <h> <out.png>
 //               [--orientation N] [--downsample K] [--tile T] [--threads N]
+//               [--detail 0..1] [--luma 0|1] [--colorfix 0|1]
 //
 // <in.rgba> is raw 8-bit RGBA (see compare_tiling.py, which also prepares it).
 #include <chrono>
@@ -28,11 +29,15 @@ int main(int argc, char** argv) {
     const int scale = std::atoi(argv[4]);
     const int w = std::atoi(argv[6]), h = std::atoi(argv[7]);
     int orientation = 1, downsample = 1, tile = 128, threads = 4;
+    PostOptions post;
     for (int i = 9; i + 1 < argc; i += 2) {
         if (!std::strcmp(argv[i], "--orientation")) orientation = std::atoi(argv[i + 1]);
         else if (!std::strcmp(argv[i], "--downsample")) downsample = std::atoi(argv[i + 1]);
         else if (!std::strcmp(argv[i], "--tile")) tile = std::atoi(argv[i + 1]);
         else if (!std::strcmp(argv[i], "--threads")) threads = std::atoi(argv[i + 1]);
+        else if (!std::strcmp(argv[i], "--detail")) post.detail = static_cast<float>(std::atof(argv[i + 1]));
+        else if (!std::strcmp(argv[i], "--luma")) post.lumaOnly = std::atoi(argv[i + 1]) != 0;
+        else if (!std::strcmp(argv[i], "--colorfix")) post.colorFix = std::atoi(argv[i + 1]) != 0;
     }
 
     std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
@@ -57,6 +62,7 @@ int main(int argc, char** argv) {
 
     EngineOptions opt;
     opt.tile = tile;
+    opt.post = post;
     const auto t0 = std::chrono::steady_clock::now();
     const Status st = upscale(img, runner, opt, *sink, [](int d, int t) {
         std::fprintf(stderr, "\rtile %d/%d", d, t);

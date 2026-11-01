@@ -36,6 +36,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import kotlin.math.roundToInt
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -121,6 +128,9 @@ fun EditorScreen(
     onPick: () -> Unit,
     onMode: (Mode) -> Unit,
     onScale: (Int) -> Unit,
+    onDetail: (Float) -> Unit,
+    onColorFix: (Boolean) -> Unit,
+    onLumaOnly: (Boolean) -> Unit,
     onStart: () -> Unit,
     onDismissError: () -> Unit,
 ) {
@@ -168,6 +178,8 @@ fun EditorScreen(
             }
         }
 
+        DetailControls(state, onDetail, onColorFix, onLumaOnly)
+
         state.estimate?.let { e ->
             Text(
                 "Output: ${dims(e.width, e.height)} · ~${bytes(e.approxPngBytes)} PNG",
@@ -213,6 +225,53 @@ fun EditorScreen(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun DetailControls(
+    state: EditorState,
+    onDetail: (Float) -> Unit,
+    onColorFix: (Boolean) -> Unit,
+    onLumaOnly: (Boolean) -> Unit,
+) {
+    val t = state.tuning
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Detail", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            Text("${(t.detail * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+        }
+        Slider(
+            value = t.detail,
+            onValueChange = onDetail,
+            valueRange = 0f..1f,
+            steps = 19,
+            modifier = Modifier.semantics { contentDescription = "Detail, ${(t.detail * 100).roundToInt()} percent" },
+        )
+        Row {
+            Text("Faithful (softer)", style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Generated detail", style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(8.dp))
+        ToggleRow("Match source colors", "Fixes color and brightness drift", t.colorFix, onColorFix)
+        ToggleRow("Keep original colors", "Only sharpen brightness; good for scans and skin tones", t.lumaOnly, onLumaOnly)
+    }
+}
+
+@Composable
+private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 

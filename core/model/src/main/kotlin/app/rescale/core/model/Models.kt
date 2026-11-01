@@ -1,9 +1,25 @@
 package app.rescale.core.model
 
 /** What kind of image the user is upscaling. Picks the model family. */
-enum class Mode(val label: String) {
-    PHOTO("Photo"),
-    ANIME("Anime / Art"),
+enum class Mode(val label: String, val defaultDetail: Float) {
+    // Photos look more natural with a little of the faithful bicubic blended back in.
+    PHOTO("Photo", 0.8f),
+    ANIME("Anime / Art", 1.0f),
+}
+
+/** User-facing artifact controls (see PostOptions in the native bridge). */
+data class Tuning(
+    val detail: Float,
+    val colorFix: Boolean = true,
+    val lumaOnly: Boolean = false,
+) {
+    init {
+        require(detail in 0f..1f) { "detail must be in 0..1" }
+    }
+
+    companion object {
+        fun defaultFor(mode: Mode) = Tuning(detail = mode.defaultDetail)
+    }
 }
 
 /** A network the native engine can run. Files live in assets/models/<id>.param/.bin. */
