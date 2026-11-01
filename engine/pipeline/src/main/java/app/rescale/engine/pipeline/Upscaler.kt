@@ -135,7 +135,9 @@ class Upscaler(private val context: Context, appVersion: Long) {
 
         val output = File(outDir, "output.png")
         val preview = File(outDir, "preview.png")
-        val tmp = File(context.cacheDir, "passes").apply { deleteRecursively(); mkdirs() }
+        // Per-job dir: if Android kills the process mid-job, WorkManager re-runs it with the same
+        // outDir and the native chain resumes after the last finished pass.
+        val tmp = File(outDir, "passes").apply { mkdirs() }
         val started = SystemClock.elapsedRealtime()
         val backend = if (plan.passes.zip(passes).all { (p, s) -> p.model.builtin || s.session.usingGpu }) {
             BackendKind.VULKAN

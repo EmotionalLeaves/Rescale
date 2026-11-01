@@ -403,6 +403,58 @@ static void testChain(const char* dir) {
     CHECK(std::fopen((std::string(dir) + "/pass0.rgba").c_str(), "rb") == nullptr);
 }
 
+// A finished intermediate from an earlier (killed) run is reused instead of recomputed.
+static void testChainResume(const char* dir) {
+    const int w = 40, h = 30;
+    auto px = makeImage(w, h, false);  // input colour (200, 90, 30)
+    Image img(px.data(), w, h, w * 4);
+    // Plant pass0 output (1× pass): a different colour, with its completion marker.
+    const std::string raw = std::string(dir) + "/pass0.rgba";
+    {
+        FILE* f = std::fopen(raw.c_str(), "wb");
+        std::vector<uint8_t> rgba(static_cast<size_t>(w) * h * 4);
+        for (size_t i = 0; i < rgba.size(); i += 4) { rgba[i] = 10; rgba[i + 1] = 20; rgba[i + 2] = 30; rgba[i + 3] = 255; }
+        std::fwrite(rgba.data(), 1, rgba.size(), f);
+        std::fclose(f);
+        FILE* d = std::fopen((raw + ".done").c_str(), "w");
+        std::fprintf(d, "%d\n", w * h * 4);
+        std::fclose(d);
+    }
+    NearestRunner a(1), b(2);
+    std::vector<PassSpec> passes(2);
+    passes[0].runner = &a;
+    passes[1].runner = &b;
+    for (auto& p : passes) p.opt.tile = 32;
+    std::unique_ptr<MemorySink> mem;
+    int firstProgress = -1;
+    auto r = runChain(img, passes, dir, 0,
+                      [&](int fw, int, int ch) { mem = std::make_unique<MemorySink>(fw, ch); return mem.get(); },
+                      [&](int d, int) { if (firstProgress < 0) firstProgress = d; }, nullptr);
+    CHECK(r.status == kOk);
+    CHECK(a.calls == 0);                                   // pass 0 skipped
+    CHECK(firstProgress == countTiles(w, h, passes[0].opt)); // progress starts after it
+    CHECK(mem && mem->data[0] == 10 && mem->data[1] == 20 && mem->data[2] == 30);
+    CHECK(std::fopen(raw.c_str(), "rb") == nullptr);        // cleaned up after success
+
+    // A marker with the wrong size is ignored (stale/partial file).
+    {
+        FILE* f = std::fopen(raw.c_str(), "wb");
+        std::fputs("short", f);
+        std::fclose(f);
+        FILE* d = std::fopen((raw + ".done").c_str(), "w");
+        std::fprintf(d, "%d\n", w * h * 4);
+        std::fclose(d);
+    }
+    NearestRunner a2(1), b2(2);
+    passes[0].runner = &a2;
+    passes[1].runner = &b2;
+    auto r2 = runChain(img, passes, dir, 0,
+                       [&](int fw, int, int ch) { mem = std::make_unique<MemorySink>(fw, ch); return mem.get(); },
+                       nullptr, nullptr);
+    CHECK(r2.status == kOk && a2.calls > 0);
+    CHECK(mem && mem->data[0] == 200);
+}
+
 static void testFitTile() {
     CHECK(fitTile(192, 16000, 4, 0) == 192);
     const int t = fitTile(192, 16000, 4, 64LL << 20);
@@ -532,6 +584,7 @@ int main(int argc, char** argv) {
     testLumaOnly();
     testChain(tmp);
     testFitTile();
+    testChainResume(tmp);
     testPngReaderAndJpeg(tmp);
     testSimilarity();
     testRetinaDecode();

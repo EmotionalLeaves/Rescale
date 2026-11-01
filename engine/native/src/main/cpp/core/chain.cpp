@@ -4,6 +4,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <sys/stat.h>
+
 #include <cstdio>
 #include <cstring>
 
@@ -50,6 +52,31 @@ private:
 };
 
 // Read-only mapping of a raw RGBA file; unlinks the file when done.
+bool fileSize(const std::string& p, long long& size) {
+    struct stat st{};
+    if (::stat(p.c_str(), &st) != 0) return false;
+    size = st.st_size;
+    return true;
+}
+
+// "<bytes>" in pass<i>.done marks pass<i>.rgba complete.
+bool passDone(const std::string& raw, long long expect) {
+    FILE* f = std::fopen((raw + ".done").c_str(), "r");
+    if (!f) return false;
+    long long v = -1;
+    const bool ok = std::fscanf(f, "%lld", &v) == 1;
+    std::fclose(f);
+    long long sz = 0;
+    return ok && v == expect && fileSize(raw, sz) && sz == expect;
+}
+
+void markDone(const std::string& raw, long long bytes) {
+    if (FILE* f = std::fopen((raw + ".done").c_str(), "w")) {
+        std::fprintf(f, "%lld\n", bytes);
+        std::fclose(f);
+    }
+}
+
 struct Mapped {
     void* addr = MAP_FAILED;
     size_t size = 0;
@@ -65,7 +92,10 @@ struct Mapped {
     }
     ~Mapped() {
         if (addr != MAP_FAILED) ::munmap(addr, size);
-        if (!path.empty()) ::unlink(path.c_str());
+        if (!path.empty()) {
+            ::unlink(path.c_str());
+            ::unlink((path + ".done").c_str());
+        }
     }
 };
 
@@ -111,12 +141,36 @@ ChainResult runChain(const Image& input, std::vector<PassSpec>& passes, const st
 
     const bool alpha = input.hasAlpha();
     const int channels = alpha ? 4 : 3;
+    // Resume: start after the last intermediate that was completed by an earlier run.
+    size_t start = 0;
+    for (size_t i = passes.size() - 1; i-- > 0;) {
+        const std::string raw = tmpDir + "/pass" + std::to_string(i) + ".rgba";
+        if (passDone(raw, static_cast<long long>(geo[i].outW) * geo[i].outH * 4)) {
+            start = i + 1;
+            break;
+        }
+    }
     int base = 0;
     std::unique_ptr<Mapped> current;  // mapped output of the previous pass
     std::unique_ptr<Image> currentImg;
     std::unique_ptr<FaceCompositor> compositor;
 
-    for (size_t i = 0; i < passes.size(); ++i) {
+    for (size_t i = 0; i < start; ++i) base += countTiles(geo[i].inW, geo[i].inH, passes[i].opt);
+    if (start > 0) {
+        const size_t k = start - 1;
+        const std::string raw = tmpDir + "/pass" + std::to_string(k) + ".rgba";
+        auto m = std::make_unique<Mapped>();
+        if (!m->open(raw, static_cast<size_t>(geo[k].outW) * geo[k].outH * 4)) {
+            res.status = kWriteError;
+            return res;
+        }
+        currentImg = std::make_unique<Image>(static_cast<const uint8_t*>(m->addr), geo[k].outW, geo[k].outH,
+                                             geo[k].outW * 4, 1);
+        current = std::move(m);
+        if (progress) progress(base, total);
+    }
+
+    for (size_t i = start; i < passes.size(); ++i) {
         PassSpec& p = passes[i];
         const Image& src = i == 0 ? input : *currentImg;
         const int s = p.runner->scale();
@@ -166,6 +220,7 @@ ChainResult runChain(const Image& input, std::vector<PassSpec>& passes, const st
         }
         if (!last) {
             raw.reset();
+            markDone(rawPath, static_cast<long long>(g.outW) * g.outH * 4);
             auto next = std::make_unique<Mapped>();
             if (!next->open(rawPath, static_cast<size_t>(g.outW) * g.outH * 4)) {
                 res.status = kWriteError;
