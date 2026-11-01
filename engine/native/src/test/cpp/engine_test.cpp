@@ -4,6 +4,7 @@
 //
 // Build: cmake -S engine/native/src/test/cpp -B build/host && cmake --build build/host && ctest --test-dir build/host
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -15,6 +16,8 @@
 
 #include "chain.h"
 #include "faces.h"
+#include "postprocess.h"
+#include "repair.h"
 #include "transcode.h"
 #include "engine.h"
 #include "sinks.h"
@@ -565,6 +568,196 @@ static void testFaceCompositor() {
     CHECK(edge[0] > 128 && edge[0] < 255 && edge[1] < 128 && edge[1] > 0);
 }
 
+// Fills holes with the mean colour of the window's known pixels; records what the net saw.
+class MeanInpainter : public InpaintRunner {
+public:
+    bool run(const std::vector<float>& rgb, const std::vector<float>& mask, std::vector<float>& out) override {
+        ++calls;
+        const size_t plane = mask.size();
+        double acc[3] = {0, 0, 0};
+        size_t known = 0;
+        for (size_t i = 0; i < plane; ++i) {
+            if (mask[i] > 0.5f) {
+                for (int c = 0; c < 3; ++c) leaked |= rgb[c * plane + i] != 0.f;  // holes must be blanked
+                continue;
+            }
+            ++known;
+            for (int c = 0; c < 3; ++c) acc[c] += rgb[c * plane + i];
+        }
+        out.resize(rgb.size());
+        for (int c = 0; c < 3; ++c) {
+            const float m = known ? static_cast<float>(acc[c] / known) : 0.5f;
+            for (size_t i = 0; i < plane; ++i) out[c * plane + i] = mask[i] > 0.5f ? m : 0.9f;  // 0.9: must not be used
+        }
+        return true;
+    }
+    int calls = 0;
+    bool leaked = false;
+};
+
+static void testHoleDistanceAndDilate() {
+    const int w = 21, h = 21;
+    std::vector<uint8_t> m(w * h, 0);
+    for (int y = 5; y < 16; ++y)
+        for (int x = 5; x < 16; ++x) m[y * w + x] = 1;  // 11×11 hole
+    const auto d = holeDistance(m, w, h);
+    CHECK(d[0] == 0.f);
+    CHECK(std::fabs(d[5 * w + 5] - 1.f) < 0.01f);          // corner of the hole: one step from known
+    CHECK(std::fabs(d[10 * w + 10] - 6.f) < 0.01f);        // centre: 6 steps
+    std::vector<uint8_t> all(16, 1);
+    CHECK(holeDistance(all, 4, 4)[5] > 1e8f);              // no known pixel anywhere
+
+    std::vector<uint8_t> dot(w * h, 0);
+    dot[10 * w + 10] = 1;
+    dilateMask(dot, w, h, 3);
+    int n = 0;
+    for (uint8_t v : dot) n += v;
+    CHECK(n >= 25 && n <= 37);                             // ~ a disc of radius 3 (π·9 ≈ 28)
+    CHECK(dot[10 * w + 13] == 1 && dot[10 * w + 14] == 0 && dot[13 * w + 13] == 0);
+}
+
+static void checkRepair(int w, int h, const std::vector<uint8_t>& mask, int minCalls) {
+    auto px = makeImage(w, h, true, true);
+    const auto orig = px;
+    MeanInpainter net;
+    int lastDone = -1, lastTotal = 0;
+    const Status st = repairImage(px, w, h, mask, net, [&](int d, int t) { CHECK(d >= lastDone && d <= t); lastDone = d; lastTotal = t; },
+                                  nullptr);
+    CHECK(st == kOk);
+    CHECK(!net.leaked);
+    CHECK(net.calls >= minCalls);
+    CHECK(lastDone == lastTotal);
+    int changed = 0, untouched = 0, bad = 0;
+    for (size_t i = 0; i < mask.size(); ++i) {
+        const bool alphaSame = px[i * 4 + 3] == orig[i * 4 + 3];
+        if (!alphaSame) ++bad;
+        if (!mask[i]) {
+            if (std::memcmp(&px[i * 4], &orig[i * 4], 4) != 0) ++bad;  // known pixels are never touched
+            ++untouched;
+        } else {
+            // 0.9 would mean a non-hole output pixel leaked in; the fill is a mean of a gradient.
+            if (px[i * 4] == 230 && px[i * 4 + 1] == 230) ++bad;
+            ++changed;
+        }
+    }
+    CHECK(bad == 0);
+    CHECK(changed + untouched == static_cast<int>(mask.size()));
+}
+
+static void testRepair() {
+    // Small image (window reflects past the borders), thin diagonal scratch.
+    {
+        const int w = 100, h = 60;
+        std::vector<uint8_t> m(w * h, 0);
+        for (int x = 0; x < w; ++x) m[(x * h / w) * w + x] = 1;
+        checkRepair(w, h, m, 1);
+    }
+    // Larger than one window: scratches spread out, several windows, no coarse pass.
+    {
+        const int w = 1300, h = 900;
+        std::vector<uint8_t> m(w * h, 0);
+        for (int y = 0; y < h; ++y) m[y * w + 700] = m[y * w + 701] = 1;
+        for (int x = 0; x < w; ++x) m[450 * w + x] = 1;
+        checkRepair(w, h, m, 6);
+        CHECK(countRepairWindows(m, w, h) == 12);  // 4 × 3 windows, every row crosses the horizontal line
+    }
+    // A big hole (radius ~150 px) forces the coarse level first.
+    {
+        const int w = 800, h = 700;
+        std::vector<uint8_t> m(w * h, 0);
+        for (int y = 200; y < 500; ++y)
+            for (int x = 250; x < 550; ++x) m[y * w + x] = 1;
+        checkRepair(w, h, m, 3);
+    }
+    // Everything is a hole: still terminates and fills.
+    {
+        std::vector<uint8_t> m(64 * 64, 1);
+        checkRepair(64, 64, m, 1);
+    }
+    // Nothing to do: no network calls, image untouched.
+    {
+        auto px = makeImage(50, 40, true);
+        const auto orig = px;
+        MeanInpainter net;
+        CHECK(repairImage(px, 50, 40, std::vector<uint8_t>(2000, 0), net, nullptr, nullptr) == kOk);
+        CHECK(net.calls == 0 && px == orig);
+    }
+    // Cancel and bad input.
+    {
+        auto px = makeImage(600, 600, true);
+        std::vector<uint8_t> m(600 * 600, 0);
+        for (int y = 0; y < 600; ++y) m[y * 600 + 300] = 1;
+        MeanInpainter net;
+        std::atomic<bool> cancel{true};
+        CHECK(repairImage(px, 600, 600, m, net, nullptr, &cancel) == kCancelled);
+        CHECK(repairImage(px, 600, 601, m, net, nullptr, nullptr) == kBadInput);
+    }
+}
+
+// Returns saturated blue for every pixel (an inpainter that tints).
+class BlueInpainter : public InpaintRunner {
+public:
+    bool run(const std::vector<float>& rgb, const std::vector<float>& mask, std::vector<float>& out) override {
+        const size_t plane = mask.size();
+        out.assign(rgb.size(), 0.f);
+        for (size_t i = 0; i < plane; ++i) {
+            out[i] = 0.2f;
+            out[plane + i] = 0.3f;
+            out[2 * plane + i] = 0.9f;
+        }
+        return true;
+    }
+};
+
+static void testToneMatch() {
+    // Sepia gradient: the filled pixels must come back on the sepia curve, not blue.
+    const int w = 200, h = 120;
+    std::vector<uint8_t> px(w * h * 4), m(w * h, 0);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            const float v = x / float(w - 1);
+            uint8_t* p = &px[(y * w + x) * 4];
+            p[0] = uint8_t(v * 240 + 15); p[1] = uint8_t(v * 200 + 20); p[2] = uint8_t(v * 150 + 25); p[3] = 255;
+        }
+    for (int y = 40; y < 50; ++y)
+        for (int x = 0; x < w; ++x) m[y * w + x] = 1;
+    auto sepia = px;
+    BlueInpainter blue;
+    CHECK(repairImage(sepia, w, h, m, blue, nullptr, nullptr) == kOk);
+    const uint8_t* f = &sepia[(45 * w + 100) * 4];
+    CHECK(f[0] > f[1] && f[1] > f[2]);  // warm, like the photo
+    // A colourful photo is left as the network made it.
+    auto colour = makeImage(w, h, true);
+    CHECK(repairImage(colour, w, h, m, blue, nullptr, nullptr) == kOk);
+    const uint8_t* c = &colour[(45 * w + 100) * 4];
+    CHECK(c[2] == 230 && c[0] == 51);
+}
+
+static void testMatchStats() {
+    const int w = 8, h = 8, s = 4;
+    std::vector<float> in(3 * w * h), out(3 * w * h * s * s);
+    for (size_t i = 0; i < in.size(); ++i) in[i] = 0.3f + 0.2f * ((i * 7) % 5) / 4.f;
+    // Output: brighter and with 2× the contrast.
+    for (int c = 0; c < 3; ++c)
+        for (int y = 0; y < h * s; ++y)
+            for (int x = 0; x < w * s; ++x) {
+                const float v = in[c * w * h + (y / s) * w + x / s];
+                out[c * w * h * s * s + y * w * s + x] = (v - 0.4f) * 2.f + 0.6f;
+            }
+    matchStats(in, w, h, out, s);
+    for (int c = 0; c < 3; ++c) {
+        double mi = 0, mo = 0;
+        for (int i = 0; i < w * h; ++i) mi += in[c * w * h + i];
+        for (int i = 0; i < w * h * s * s; ++i) mo += out[c * w * h * s * s + i];
+        CHECK(std::fabs(mi / (w * h) - mo / (w * h * s * s)) < 1e-4);  // mean matched
+    }
+    // Flat tile: noise is not amplified, value pulled to the input level.
+    std::vector<float> fin(3 * 4, 0.5f), fout(3 * 4 * 4, 0.7f);
+    fout[3] = 0.71f;
+    matchStats(fin, 2, 2, fout, 2);
+    CHECK(std::fabs(fout[0] - 0.4995f) < 1e-3 && std::fabs(fout[3] - 0.5075f) < 1e-3);
+}
+
 int main(int argc, char** argv) {
     const char* tmp = argc > 1 ? argv[1] : ".";
     testPlanAxis();
@@ -589,6 +782,10 @@ int main(int argc, char** argv) {
     testSimilarity();
     testRetinaDecode();
     testFaceCompositor();
+    testHoleDistanceAndDilate();
+    testRepair();
+    testMatchStats();
+    testToneMatch();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

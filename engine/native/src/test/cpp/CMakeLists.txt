@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(ZLIB REQUIRED)
 set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../../main/cpp/core)
 
-add_executable(engine_test engine_test.cpp ${CORE}/tiler.cpp ${CORE}/sinks.cpp ${CORE}/engine.cpp ${CORE}/postprocess.cpp ${CORE}/chain.cpp ${CORE}/transcode.cpp ${CORE}/faces.cpp ${CORE}/../third_party/jpge/jpge.cpp)
+add_executable(engine_test engine_test.cpp ${CORE}/tiler.cpp ${CORE}/sinks.cpp ${CORE}/engine.cpp ${CORE}/postprocess.cpp ${CORE}/chain.cpp ${CORE}/transcode.cpp ${CORE}/faces.cpp ${CORE}/repair.cpp ${CORE}/../third_party/jpge/jpge.cpp)
 target_include_directories(engine_test PRIVATE ${CORE})
 target_link_libraries(engine_test PRIVATE ZLIB::ZLIB)
 target_compile_options(engine_test PRIVATE -Wall -Wextra -O2 -fsanitize=address,undefined)

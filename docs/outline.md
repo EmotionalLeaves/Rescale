@@ -428,10 +428,10 @@ Code style (ktlint/detekt, clang-format), module boundaries, how to add a model 
 - **Video upscaling** (MediaCodec decode → per-frame SR with temporal consistency via animevideov3 / flow-guided blending → MediaCodec encode)
 - **Custom model import** (user-provided ONNX/NCNN with a manifest wizard)
 - Vendor NPU backends (Qualcomm QNN, MediaTek NeuroPilot via ORT EPs)
-- Inpainting for scratches/tears on old photos (LaMa, Apache-2.0)
+- ~~Inpainting for scratches/tears on old photos (LaMa, Apache-2.0)~~ Done in v0.7 with MI-GAN (MIT) + the BOPBTL damage detector
 - Colorization for B&W photos (DDColor, Apache-2.0; clearly labeled as invented color)
 - Desktop companion (Compose Multiplatform or a CLI sharing the C++ engine), plus LAN offload to a PC GPU, still with no cloud
-- Diffusion-based SR (e.g. a distilled one-step model) for flagships, labeled "generative"
+- ~~Diffusion-based SR (e.g. a distilled one-step model) for flagships, labeled "generative"~~ Done in v0.7 with AdcSR
 
 ---
 

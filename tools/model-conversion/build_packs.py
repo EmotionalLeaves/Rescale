@@ -28,22 +28,53 @@ SOURCES = {
     "GFPGANv1.4.pth": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/GFPGANv1.4.pth",
     "retinaface_mnet.pth": "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_mobilenet0.25_Final.pth",
 }
+# Big sources, fetched only for the packs that need them.
+SOURCES_REPAIR = {
+    "global_checkpoints.zip":
+        "https://github.com/microsoft/Bringing-Old-Photos-Back-to-Life/releases/download/v1.0/global_checkpoints.zip",
+    "migan_traced.pt": "https://github.com/Sanster/models/releases/download/migan/migan_traced.pt",
+}
+HF_ADCSR = "https://huggingface.co/Guaishou74851/AdcSR/resolve/main/weight/"
+SOURCES_GENERATIVE = {
+    "adcsr_net_params_200.pkl": HF_ADCSR + "net_params_200.pkl",
+    "adcsr_halfDecoder.ckpt": HF_ADCSR + "pretrained/halfDecoder.ckpt",
+    # Architecture only (no weights): Stable Diffusion 2.1-base UNet config.
+    "sd21_unet_config.json":
+        "https://huggingface.co/sd2-community/stable-diffusion-2-1-base/resolve/main/unet/config.json",
+}
 REPOS = {
     "FBCNN": "https://github.com/jiaxi-jiang/FBCNN",
     "GFPGAN": "https://github.com/TencentARC/GFPGAN",
     "facexlib": "https://github.com/xinntao/facexlib",
 }
+REPOS_REPAIR = {"bopbtl": "https://github.com/microsoft/Bringing-Old-Photos-Back-to-Life"}
+REPOS_GENERATIVE = {"AdcSR": "https://github.com/Guaishou74851/AdcSR"}
 
 BSD_RESR = "Real-ESRGAN models: BSD-3-Clause, (c) 2021 Xintao Wang. https://github.com/xinntao/Real-ESRGAN\n"
 APACHE_FBCNN = "FBCNN: Apache-2.0, (c) Jiaxi Jiang et al. https://github.com/jiaxi-jiang/FBCNN\n"
 FACES_LIC = ("GFPGAN v1.4: Apache-2.0, (c) 2021 THL A29 Limited (Tencent). https://github.com/TencentARC/GFPGAN\n"
              "Converted from the 'clean' architecture (no StyleGAN2 CUDA ops).\n"
              "RetinaFace MobileNet-0.25 (facexlib): MIT, (c) 2020 Xintao Wang. https://github.com/xinntao/facexlib\n")
+REPAIR_LIC = ("MI-GAN (512, Places2): MIT, (c) 2024 Picsart AI Research (PAIR). https://github.com/Picsart-AI-Research/MI-GAN\n"
+              "Converted from the TorchScript trace published with IOPaint (github.com/Sanster/models).\n"
+              "Old-photo damage detector (scratch detection UNet): MIT, (c) Microsoft Corporation. "
+              "https://github.com/microsoft/Bringing-Old-Photos-Back-to-Life\n")
 
 
-def fetch(work):
+def generative_license():
+    with open(os.path.join(HERE, "licenses", "CreativeML-OpenRAIL++-M.txt")) as f:
+        rail = f.read()
+    return ("AdcSR (Adversarial Diffusion Compression for Real-World Image Super-Resolution, CVPR 2025)\n"
+            "Code: Apache-2.0, (c) Bin Chen et al. https://github.com/Guaishou74851/AdcSR\n"
+            "Weights: distilled from Stable Diffusion 2.1-base (via OSEDiff) and therefore a Derivative of the Model\n"
+            "under the CreativeML Open RAIL++-M License below, including its use-based restrictions (Attachment A),\n"
+            "which also apply to you. Modifications by Rescale: converted to ncnn FP16; the last two VAE decoder\n"
+            "blocks are rescaled by 1/32 to stay within FP16 range (mathematically equivalent).\n\n" + rail)
+
+
+def fetch(work, extra_sources=None, extra_repos=None):
     os.makedirs(work, exist_ok=True)
-    for name, url in SOURCES.items():
+    for name, url in {**SOURCES, **(extra_sources or {})}.items():
         path = os.path.join(work, name)
         if not os.path.exists(path):
             print("downloading", url, flush=True)
@@ -53,7 +84,7 @@ def fetch(work):
     if not os.path.isdir(resr):
         with zipfile.ZipFile(os.path.join(work, "realesrgan-ncnn-vulkan.zip")) as z:
             z.extractall(resr)
-    for name, url in REPOS.items():
+    for name, url in {**REPOS, **(extra_repos or {})}.items():
         d = os.path.join(work, name)
         if not os.path.isdir(d):
             subprocess.run(["git", "clone", "--depth", "1", url, d], check=True)
@@ -79,8 +110,9 @@ def deterministic_zip(path, files, license_text):
             info = zipfile.ZipInfo(os.path.basename(src), date_time=(2020, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
-            with open(src, "rb") as f:
-                z.writestr(info, f.read())
+            big = os.path.getsize(src) > 0x7FFFFFFF
+            with open(src, "rb") as f, z.open(info, "w", force_zip64=big) as dst:
+                shutil.copyfileobj(f, dst, 1 << 20)
         info = zipfile.ZipInfo("LICENSE.txt", date_time=(2020, 1, 1, 0, 0, 0))
         z.writestr(info, license_text)
 
@@ -100,11 +132,18 @@ def main():
     models = os.path.join(work, "models")
     os.makedirs(models, exist_ok=True)
     os.makedirs(out, exist_ok=True)
-    resr, fb = fetch(work)
+    want = lambda pid: only is None or pid in only  # noqa: E731
+    extra_s, extra_r = {}, {}
+    if want("repair"):
+        extra_s.update(SOURCES_REPAIR)
+        extra_r.update(REPOS_REPAIR)
+    if want("generative"):
+        extra_s.update(SOURCES_GENERATIVE)
+        extra_r.update(REPOS_GENERATIVE)
+    resr, fb = fetch(work, extra_s, extra_r)
     w = lambda n: os.path.join(work, n)  # noqa: E731
     m = lambda n: os.path.join(models, n)  # noqa: E731
 
-    want = lambda pid: only is None or pid in only  # noqa: E731
     if want("denoise"):  # x4v3 blended with its wdn twin (network interpolation)
         for pct in (50, 100):
             run("export_ncnn.py", "--weights", w("general-x4v3.pth"), "--wdn", w("general-wdn-x4v3.pth"),
@@ -119,6 +158,13 @@ def main():
         run("export_gfpgan.py", "--repo", w("GFPGAN"), "--weights", w("GFPGANv1.4.pth"), "--out", m("gfpgan-v1.4"))
         run("export_retinaface.py", "--repo", w("facexlib"), "--weights", w("retinaface_mnet.pth"),
             "--out", m("retinaface-mnet"))
+    if want("repair"):
+        run("export_repair.py", "--repo", w("bopbtl"), "--checkpoints", w("global_checkpoints.zip"),
+            "--migan", w("migan_traced.pt"), "--out", models)
+    if want("generative"):
+        run("export_adcsr.py", "--repo", w("AdcSR"), "--weights", w("adcsr_net_params_200.pkl"),
+            "--decoder", w("adcsr_halfDecoder.ckpt"), "--unet-config", w("sd21_unet_config.json"),
+            "--out", m("adcsr-x4"))
 
     packs = {
         "jpeg": (["fbcnn-color"], APACHE_FBCNN),
@@ -126,6 +172,8 @@ def main():
         "photo-pro": (["realesrgan-x4plus"], BSD_RESR),
         "anime-pro": (["realesrgan-x4plus-anime"], BSD_RESR),
         "faces": (["gfpgan-v1.4", "retinaface-mnet"], FACES_LIC),
+        "repair": (["scratch-detect", "migan-512"], REPAIR_LIC),
+        "generative": (["adcsr-x4"], generative_license() if want("generative") else ""),
     }
     manifest = {"version": 1, "packs": []}
     if args.merge and os.path.exists(args.merge):

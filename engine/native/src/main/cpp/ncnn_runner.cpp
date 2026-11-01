@@ -1,6 +1,7 @@
 #include "ncnn_runner.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 
@@ -37,6 +38,11 @@ NcnnRunner::NcnnRunner(int scale, bool gpu, int threads, std::string inBlob, std
 
 NcnnRunner::~NcnnRunner() { net_.clear(); }
 
+void NcnnRunner::setLowMemory(bool on) {
+    net_.opt.use_winograd_convolution = !on;
+    net_.opt.use_sgemm_convolution = !on;
+}
+
 bool NcnnRunner::load(const std::string& paramPath, const std::string& binPath) {
     return net_.load_param(paramPath.c_str()) == 0 && net_.load_model(binPath.c_str()) == 0;
 }
@@ -72,6 +78,14 @@ bool NcnnRunner::run(const std::vector<float>& in, int w, int h, std::vector<flo
         ncnn::cast_float16_to_float32(r, f);
         r = f;
     }
+    // FP16 overflow on a GPU shows up as inf/NaN: fail the tile so the app falls back to CPU
+    // instead of writing black squares.
+    for (int c = 0; c < 3; ++c) {
+        const float* p = r.channel(c);
+        const size_t n = static_cast<size_t>(r.w) * r.h;
+        for (size_t i = 0; i < n; ++i)
+            if (!std::isfinite(p[i])) return false;
+    }
     const int ow = w * scale_, oh = h * scale_;
     const size_t oplane = static_cast<size_t>(ow) * oh;
     out.resize(3 * oplane);
@@ -87,6 +101,7 @@ bool NcnnRunner::run(const std::vector<float>& in, int w, int h, std::vector<flo
             }
         }
     }
+    if (statMatch_) matchStats(in, w, h, out, scale_);
     return true;
 }
 

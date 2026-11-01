@@ -155,4 +155,28 @@ void postProcessTile(const std::vector<float>& in, int w, int h, int s, const Po
     }
 }
 
+void matchStats(const std::vector<float>& in, int w, int h, std::vector<float>& out, int scale) {
+    const size_t ip = static_cast<size_t>(w) * h, op = ip * scale * scale;
+    for (int c = 0; c < 3; ++c) {
+        double si = 0, sii = 0, so = 0, soo = 0;
+        for (size_t i = 0; i < ip; ++i) {
+            const double v = in[c * ip + i];
+            si += v;
+            sii += v * v;
+        }
+        for (size_t i = 0; i < op; ++i) {
+            const double v = out[c * op + i];
+            so += v;
+            soo += v * v;
+        }
+        const double mi = si / ip, mo = so / op;
+        const double vi = std::max(0.0, sii / ip - mi * mi), vo = std::max(0.0, soo / op - mo * mo);
+        // Generative models add texture, so the output's contrast is legitimately a bit higher;
+        // only pull back large deviations, and never amplify noise in flat tiles.
+        const double k = vo > 1e-8 ? std::clamp(std::sqrt(vi / vo), 0.8, 1.0) : 1.0;
+        float* d = out.data() + c * op;
+        for (size_t i = 0; i < op; ++i) d[i] = static_cast<float>((d[i] - mo) * k + mi);
+    }
+}
+
 }  // namespace rescale

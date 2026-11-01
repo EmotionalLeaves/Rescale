@@ -39,6 +39,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import app.rescale.core.model.Stage
+import app.rescale.core.model.PackModels
+import app.rescale.core.model.Packs
 import androidx.compose.material3.Slider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -151,6 +153,8 @@ fun EditorScreen(
     onOpenModels: () -> Unit,
     onFinishBicubic: (Boolean) -> Unit,
     onFaceStrength: (Float) -> Unit,
+    onGenerative: (Boolean) -> Unit,
+    onEditMask: () -> Unit,
     batchActive: Boolean,
     onStart: () -> Unit,
     onDismissError: () -> Unit,
@@ -209,6 +213,19 @@ fun EditorScreen(
             }
         }
 
+        if (state.autoPlan?.suggestRepair == true && Stage.REPAIR !in state.stages) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Looks like it has scratches, cracks or spots. Repair can fill them in.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onEditMask) { Text("Review") }
+                }
+            }
+        }
+
         Text("Scale", style = MaterialTheme.typography.titleSmall)
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             Planner.supportedScales.forEachIndexed { i, s ->
@@ -235,7 +252,7 @@ fun EditorScreen(
             )
         }
 
-        RestorationControls(state, onToggleStage, onPro, onOpenModels, onFaceStrength)
+        RestorationControls(state, onToggleStage, onPro, onOpenModels, onFaceStrength, onGenerative, onEditMask)
 
         DetailControls(state, onDetail, onColorFix, onLumaOnly)
 
@@ -296,6 +313,8 @@ private fun RestorationControls(
     onPro: (Boolean) -> Unit,
     onOpenModels: () -> Unit,
     onFaceStrength: (Float) -> Unit,
+    onGenerative: (Boolean) -> Unit,
+    onEditMask: () -> Unit,
 ) {
     Column {
         Text("Restoration", style = MaterialTheme.typography.titleSmall)
@@ -303,7 +322,7 @@ private fun RestorationControls(
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Stage.entries.forEach { stage ->
                 val available = stage.packId in state.installedPacks
-                val usable = available && !(stage != Stage.DE_JPEG && state.mode != Mode.PHOTO)
+                val usable = available && !(stage != Stage.DE_JPEG && stage != Stage.REPAIR && state.mode != Mode.PHOTO)
                 FilterChip(
                     selected = usable && stage in state.stages,
                     onClick = { if (available) onToggleStage(stage) else onOpenModels() },
@@ -315,6 +334,20 @@ private fun RestorationControls(
                 )
             }
         }
+        if (Stage.REPAIR in state.stages) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val painted = state.repairStrokes.count { !it.erase }
+                Text(
+                    listOfNotNull(
+                        if (state.autoDamage) "Detected damage" else null,
+                        if (painted > 0) "$painted painted area" + (if (painted > 1) "s" else "") else null,
+                    ).joinToString(" + ").ifEmpty { "Nothing marked" } + " will be filled in",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onEditMask) { Text("Edit") }
+            }
+        }
         if (Stage.FACES in state.stages) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Face restore strength", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
@@ -323,7 +356,22 @@ private fun RestorationControls(
             Slider(value = state.faceStrength, onValueChange = onFaceStrength, valueRange = 0.1f..1f)
             Notice("Restored faces are partly invented. Small faces can end up looking like someone else. Don't use results as evidence.")
         }
-        if (state.proAvailable) {
+        if (state.generativeAvailable) {
+            val tiles = state.input?.info?.let { generativeTiles(it.width, it.height) } ?: 0
+            ToggleRow(
+                "Generative detail",
+                "One-step diffusion model: realistic hair, skin and fabric. Slow: about $tiles tiles " +
+                    "at 1–3 s each on a fast GPU, much longer on CPU.",
+                state.generative,
+                onGenerative,
+            )
+            if (state.generative) {
+                Notice("Generative detail redraws the image: small faces, text and patterns can change. Don't use it where accuracy matters.")
+            }
+        } else if (state.mode == Mode.PHOTO && Packs.GENERATIVE !in state.installedPacks) {
+            TextButton(onClick = onOpenModels) { Text("Get Generative detail (diffusion model)") }
+        }
+        if (state.proAvailable && !(state.generative && state.generativeAvailable)) {
             ToggleRow(
                 "Pro model",
                 "Larger model with stronger texture; several times slower",
@@ -332,6 +380,13 @@ private fun RestorationControls(
             )
         }
     }
+}
+
+/** Tiles the generative pass runs over a w×h input (engine layout: 96-px tiles, 16-px overlap). */
+internal fun generativeTiles(w: Int, h: Int): Int {
+    val t = PackModels.ADCSR.tile
+    val axis = { n: Int -> if (n <= t) 1 else (n - 16 + (t - 16) - 1) / (t - 16) }
+    return axis(w) * axis(h)
 }
 
 @Composable
@@ -406,7 +461,7 @@ fun RunningScreen(job: JobState.Running, thumbnail: Bitmap?, onCancel: () -> Uni
             )
             Spacer(Modifier.height(24.dp))
         }
-        Text("Upscaling…", style = MaterialTheme.typography.titleMedium)
+        Text(if (job.repairing) "Repairing damage…" else "Upscaling…", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(12.dp))
         if (job.total > 0) {
             LinearProgressIndicator(
@@ -415,7 +470,7 @@ fun RunningScreen(job: JobState.Running, thumbnail: Bitmap?, onCancel: () -> Uni
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "Tile ${job.done} of ${job.total}" + (job.etaSeconds?.let { " · ${UpscaleWorker.formatEta(it)} left" } ?: ""),
+                (if (job.repairing) "Window" else "Tile") + " ${job.done} of ${job.total}" + (job.etaSeconds?.let { " · ${UpscaleWorker.formatEta(it)} left" } ?: ""),
                 style = MaterialTheme.typography.bodyMedium,
             )
         } else {

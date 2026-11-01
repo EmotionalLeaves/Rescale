@@ -30,11 +30,23 @@ class BackendSelector(context: Context, private val appVersion: Long) {
     private fun configure(s: NativeEngine.Session, spec: ModelSpec, extra: FloatArray?): NativeEngine.Session {
         if (spec.alignment > 1) s.setAlignment(spec.alignment)
         if (spec.extraInput != null) s.setExtraInput(spec.extraInput!!, extra ?: floatArrayOf(0.5f))
+        if (spec.signedRange) s.setNormalization(2f, -1f)
+        if (spec.statMatch) s.setStatMatch(true)
         return s
     }
 
     fun open(spec: ModelSpec, param: File, bin: File, extra: FloatArray? = null): NativeEngine.Session {
         val threads = if (gentle) 2 else cpuThreads()
+        // Big models skip the CPU-vs-GPU self-test: it would hold a second ~1 GB copy in memory.
+        // They follow the verdict of the models that did run it, and a NaN tile still fails the
+        // job and flips the app to CPU.
+        if (spec.lowMemory) {
+            val gpu = gpuTrusted()
+            return (NativeEngine.open(param.path, bin.path, spec.inputBlob, spec.outputBlob, spec.scale, gpu, threads, true)
+                ?: NativeEngine.open(param.path, bin.path, spec.inputBlob, spec.outputBlob, spec.scale, false, threads, true))
+                ?.let { configure(it, spec, extra) }
+                ?: error("Couldn't load model ${spec.id}")
+        }
         val key = "gpu_ok_${spec.id}_$appVersion"
         val wantGpu = !forceCpu && NativeEngine.gpuCount() > 0 && prefs.getBoolean(key, true)
         if (wantGpu) {
@@ -83,6 +95,9 @@ class BackendSelector(context: Context, private val appVersion: Long) {
      */
     fun gpuTrusted(): Boolean = !forceCpu && NativeEngine.gpuCount() > 0 &&
         prefs.all.filterKeys { it.startsWith("gpu_ok_") }.values.let { v -> v.isNotEmpty() && v.all { it == true } }
+
+    /** True once some model has run the GPU self-test (or the GPU is off). */
+    fun hasVerdict(): Boolean = forceCpu || NativeEngine.gpuCount() == 0 || prefs.all.keys.any { it.startsWith("gpu_ok_") }
 
     fun openTrusted(spec: ModelSpec, param: File, bin: File): NativeEngine.Session {
         val threads = if (gentle) 2 else cpuThreads()

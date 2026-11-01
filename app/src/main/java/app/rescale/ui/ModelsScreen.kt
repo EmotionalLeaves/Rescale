@@ -1,5 +1,10 @@
 package app.rescale.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +42,7 @@ fun ModelsScreen(
     onCancel: (String) -> Unit,
     onDelete: (String) -> Unit,
     onImport: () -> Unit,
+    deviceRamGb: Int = Int.MAX_VALUE,
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -60,7 +66,7 @@ fun ModelsScreen(
                 )
             }
         }
-        items(packs, key = { it.info.id }) { p -> PackCard(p, published, onDownload, onCancel, onDelete) }
+        items(packs, key = { it.info.id }) { p -> PackCard(p, published, deviceRamGb, onDownload, onCancel, onDelete) }
         item {
             OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.FileOpen, contentDescription = null)
@@ -82,10 +88,24 @@ fun ModelsScreen(
 private fun PackCard(
     p: PackUi,
     published: Boolean,
+    deviceRamGb: Int,
     onDownload: (String) -> Unit,
     onCancel: (String) -> Unit,
     onDelete: (String) -> Unit,
 ) {
+    var askTerms by remember { mutableStateOf(false) }
+    val tooLittleRam = deviceRamGb < p.info.minRamGb
+    if (askTerms) {
+        AlertDialog(
+            onDismissRequest = { askTerms = false },
+            title = { Text("${p.info.name}: licence terms") },
+            text = { Text(p.info.terms.orEmpty()) },
+            confirmButton = {
+                TextButton(onClick = { askTerms = false; onDownload(p.info.id) }) { Text("Agree and download") }
+            },
+            dismissButton = { TextButton(onClick = { askTerms = false }) { Text("Cancel") } },
+        )
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -117,7 +137,17 @@ private fun PackCard(
                     if (p.installed) {
                         TextButton(onClick = { onDelete(p.info.id) }) { Text("Delete") }
                     } else {
-                        Button(onClick = { onDownload(p.info.id) }, enabled = published && p.sizeBytes > 0) {
+                        if (tooLittleRam) {
+                            Text(
+                                "Needs a phone with at least ${p.info.minRamGb} GB of RAM (this one has about $deviceRamGb GB).",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Button(
+                            onClick = { if (p.info.terms != null) askTerms = true else onDownload(p.info.id) },
+                            enabled = published && p.sizeBytes > 0 && !tooLittleRam,
+                        ) {
                             Text("Download")
                         }
                     }

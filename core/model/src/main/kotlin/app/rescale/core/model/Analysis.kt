@@ -29,11 +29,18 @@ data class Analysis(
     val grayscale: Boolean,
     /** Faces small enough to benefit from restoration (set when the face pack is installed). */
     val smallFaces: Int = 0,
+    /** Fraction of the image flagged as scratches/tears/spots (set when the repair pack is installed). */
+    val damage: Float = 0f,
 ) {
     val tiny: Boolean get() = min(width, height) < 256
     val heavyJpeg: Boolean get() = (jpegQuality != null && jpegQuality < 50) || blockiness > 1.45f
     val someJpeg: Boolean get() = (jpegQuality != null && jpegQuality < 80) || blockiness > 1.2f
     val noisy: Boolean get() = noiseSigma > 6f
+    /**
+     * Enough flagged damage to suggest Repair. The detector also fires on thin real structures
+     * (railings, lattice towers: up to ~4.6% on our clean test photos), so this is only ever a suggestion.
+     */
+    val damaged: Boolean get() = damage >= DAMAGE_THRESHOLD
     val blurry: Boolean get() = sharpness < 3f
     val looksLikeArt: Boolean
         get() = paletteCoverage > 0.55f && flatFraction > 0.45f && exactFlatFraction > 0.25f
@@ -61,6 +68,8 @@ data class Analysis(
     }
 
     companion object {
+        const val DAMAGE_THRESHOLD = 0.05f
+
         /**
          * @param argb packed ARGB pixels of the crop (row-major, [w]×[h]).
          * @param fullWidth/fullHeight size of the whole image (for "tiny").

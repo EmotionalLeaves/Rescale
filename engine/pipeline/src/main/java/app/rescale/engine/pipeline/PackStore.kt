@@ -122,7 +122,8 @@ class PackStore(private val context: Context) {
         }
         if (isCancelled()) return
         try {
-            part.inputStream().use { installZip(it, expectedId = id) }
+            // Verify and unpack in place: no second copy of a ~1 GB pack.
+            PackInstaller(root, context.cacheDir, manifest).installFile(part, expectedId = id)
         } finally {
             part.delete()
         }
@@ -152,7 +153,28 @@ class PackInstaller(private val root: File, private val tmpDir: File, private va
             }
         }
         try {
-            val digest = sha.digest().toHex()
+            return installVerified(tmpZip, sha.digest().toHex(), expectedId)
+        } finally {
+            tmpZip.delete()
+        }
+    }
+
+    /** Installs a pack zip that's already a file (a finished download). The file is left in place. */
+    fun installFile(zip: File, expectedId: String? = null): String {
+        val sha = MessageDigest.getInstance("SHA-256")
+        zip.inputStream().use { input ->
+            val buf = ByteArray(256 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                sha.update(buf, 0, n)
+            }
+        }
+        return installVerified(zip, sha.digest().toHex(), expectedId)
+    }
+
+    private fun installVerified(tmpZip: File, digest: String, expectedId: String?): String {
+        run {
             val entry = manifest.values.firstOrNull { it.sha256 == digest }
                 ?: throw PackIntegrityException("This file isn't a Rescale model pack (checksum doesn't match)")
             if (expectedId != null && entry.id != expectedId) throw PackIntegrityException("Wrong pack")
@@ -191,8 +213,6 @@ class PackInstaller(private val root: File, private val tmpDir: File, private va
             target.deleteRecursively()
             if (!staging.renameTo(target)) throw PackIntegrityException("Couldn't activate pack")
             return entry.id
-        } finally {
-            tmpZip.delete()
         }
     }
 }

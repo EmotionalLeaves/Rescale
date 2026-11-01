@@ -160,6 +160,26 @@ class AnalysisTest {
         assertFalse(Stage.FACES in AutoPlanner.plan(art, setOf(Stage.FACES)).settings.stages)
     }
 
+    @Test fun damageOnlySuggestsRepair() {
+        val a = analyse(photo()).copy(damage = 0.09f)
+        assertTrue(a.damaged)
+        val plan = AutoPlanner.plan(a, setOf(Stage.REPAIR))
+        assertTrue(plan.suggestRepair)
+        assertFalse(Stage.REPAIR in plan.settings.stages)  // detections can be real thin structures
+        assertFalse(AutoPlanner.plan(a, emptySet()).suggestRepair)
+        // Stray detections on clean photos (lattices, railings) stay below the threshold.
+        assertFalse(analyse(photo()).copy(damage = 0.046f).damaged)
+    }
+
+    @Test fun autoPicksGenerativeOnlyForSmallPhotosWhenAllowed() {
+        val small = analyse(photo()).copy(width = 500, height = 400)
+        assertTrue(AutoPlanner.plan(small, emptySet(), generativeOk = true).settings.generative)
+        assertTrue(AutoPlanner.plan(small, emptySet(), generativeOk = true).chips.last().contains("Generative"))
+        assertFalse(AutoPlanner.plan(small, emptySet(), generativeOk = false).settings.generative)
+        assertFalse(AutoPlanner.plan(small.copy(width = 1200, height = 900), emptySet(), generativeOk = true).settings.generative)
+        assertFalse(AutoPlanner.plan(analyse(art()), emptySet(), generativeOk = true).settings.generative)
+    }
+
     @Test fun bigImagesGet2x() {
         val a = analyse(photo()).copy(width = 4000, height = 3000)
         assertEquals(2, AutoPlanner.plan(a).settings.scale)

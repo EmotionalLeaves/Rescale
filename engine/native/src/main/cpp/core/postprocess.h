@@ -31,4 +31,8 @@ void blurPlanes(std::vector<float>& planes, int w, int h, float sigma);
 void postProcessTile(const std::vector<float>& in, int w, int h, int s, const PostOptions& opt,
                      std::vector<float>& out, std::vector<float>& scratch);
 
+// Per-channel mean/contrast match of an upscaled tile (planar RGB, (w*scale)×(h*scale)) to its
+// input tile (w×h). Contrast is only ever reduced, by at most 20%.
+void matchStats(const std::vector<float>& in, int w, int h, std::vector<float>& out, int scale);
+
 }  // namespace rescale

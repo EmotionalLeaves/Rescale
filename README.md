@@ -1,17 +1,26 @@
 # Rescale
 
-**On-device image upscaler for Android.** Make small, compressed or old images 2× or 4× bigger, entirely on your phone. No uploads, no accounts, no ads, no watermarks, and no internet permission at all.
+**On-device image upscaler and restorer for Android.** Make small, compressed or old images 2× or 4× bigger, repair scratched photos, and add realistic detail with a diffusion model, entirely on your phone. No uploads, no accounts, no ads, no watermarks. It only goes online when you download an optional model pack.
 
 ![Bicubic vs Rescale Photo vs Rescale Anime, 128 px input upscaled 4×](samples/astronaut-128px-4x.jpg)
 <sub>128 × 128 JPEG (q60) → 512 × 512. Left: bicubic. Middle: Photo mode. Right: Anime/Art mode. Source: NASA, public domain.</sub>
 
+![Bicubic vs Real-ESRGAN vs Generative detail, 300 px input upscaled 4×](samples/cat-300px-4x-generative.jpg)
+<sub>300 × 200 input → 4×, crop. Left: bicubic. Middle: Photo mode (Real-ESRGAN). Right: Generative detail (AdcSR). Source: scikit-image sample, public domain.</sub>
+
+![Synthetic scratches, cracks and spots on a sepia photo, repaired automatically](samples/old-photo-repair.jpg)
+<sub>Repair with automatic detection only (no painting): most cracks and spots are gone; one crack across the collar was missed and would be painted in the mask editor. NASA, public domain; damage added for the demo.</sub>
+
 > **Honesty note:** upscaling *invents* plausible detail. It doesn't recover detail that was never captured. Don't treat results as evidence, especially faces and text.
 
-## Features (v0.6)
+## Features (v0.7)
+
+- **Repair** (pack): finds scratches, cracks, tears and spots on old photos and fills them in (MI-GAN). A mask editor shows what was found; paint to remove anything else, erase to keep what isn't damage
+- **Generative detail** (pack): AdcSR, a one-step diffusion upscaler, for realistic hair, fur, skin and fabric (slow; Photo mode)
 
 - **Auto** mode: analyses compression, noise, sharpness and content type, then picks the model and settings for you (and says what it picked)
 - **Photo** mode (Real-ESRGAN general-x4v3) and **Anime / Art** mode (Real-ESRGAN animevideov3), at 2×, 4×, 8×, 16× or 32× (chained passes with pre-blur and decaying detail)
-- Optional **model packs** (downloaded on request and SHA-256 verified, or imported from a zip): **De-JPEG** (FBCNN), **Denoise**, **Face restore** (GFPGAN + RetinaFace), and **Pro** upscalers (Real-ESRGAN x4plus)
+- Optional **model packs** (downloaded on request and SHA-256 verified, or imported from a zip): **Repair**, **Generative detail**, **De-JPEG** (FBCNN), **Denoise**, **Face restore** (GFPGAN + RetinaFace), and **Pro** upscalers (Real-ESRGAN x4plus)
 - **Resumable**: long chains checkpoint each pass and continue after the app is killed
 - **GPU (Vulkan) via ncnn**, with automatic CPU fallback. On first use, a self-test compares GPU and CPU output and switches to CPU on devices whose drivers return garbage
 - **Tiled processing streamed to disk.** Outputs are written row band by row band straight into a PNG, so the full output is never held in memory. Tiles overlap and are cross-faded with Hann ramps, and borders are reflect-padded, so there are no seams (verified at < 1/255 vs whole-image inference)
@@ -43,6 +52,8 @@ Requires Android 8.0+ (API 26). Vulkan is used where available.
 | Denoise (pack) | general-x4v3 + wdn blends | 4 MB | BSD-3-Clause |
 | Pro (packs) | RealESRGAN x4plus / x4plus anime 6B | 29 MB / 7 MB | BSD-3-Clause |
 | Faces (pack) | GFPGAN v1.4 + RetinaFace MobileNet-0.25 | 155 MB | Apache-2.0 / MIT |
+| Repair (pack) | MI-GAN 512 + old-photo damage detector (BOPBTL) | 87 MB | MIT / MIT |
+| Generative (pack) | AdcSR (pruned SD 2.1 UNet + half VAE decoder, one step) | 913 MB | Apache-2.0 code; weights CreativeML Open RAIL++-M (use restrictions) |
 
 See [MODELS_LICENSES.md](MODELS_LICENSES.md). The Photo model was converted with [`tools/model-conversion`](tools/model-conversion) (PyTorch → pnnx → ncnn, 64 dB parity).
 

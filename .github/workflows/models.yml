@@ -14,9 +14,9 @@ permissions:
   contents: write
 
 env:
-  PACKS_VERSION: '2'
+  PACKS_VERSION: '3'
   # Packs built into this release; others keep their entries (and URLs) from earlier releases.
-  PACKS_ONLY: 'faces'
+  PACKS_ONLY: 'repair,generative'
 
 concurrency:
   group: models
@@ -38,17 +38,26 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Free disk space
+        if: steps.check.outputs.skip != 'true'
+        # The generative pack needs ~10 GB: 2.2 GB of upstream weights, traced pieces, the
+        # converted network and its zip.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - uses: actions/setup-python@v5
         if: steps.check.outputs.skip != 'true'
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
       - name: Install converters
         if: steps.check.outputs.skip != 'true'
         run: |
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          # Same versions the published checksums were produced with (conversion is deterministic).
+          pip install torch==2.15.0 torchvision==0.29.2 --index-url https://download.pytorch.org/whl/cpu
           pip install -r tools/model-conversion/requirements.txt
-          pip install opencv-python-headless scikit-image
+          pip install opencv-python-headless scikit-image==0.26.0 diffusers==0.42.1
 
       - name: Cache upstream weights
         if: steps.check.outputs.skip != 'true'
@@ -57,7 +66,10 @@ jobs:
           path: |
             ~/packwork/*.pth
             ~/packwork/*.zip
-          key: packwork-v2-${{ hashFiles('tools/model-conversion/build_packs.py') }}
+            ~/packwork/*.pt
+            ~/packwork/*.pkl
+            ~/packwork/*.ckpt
+          key: packwork-v3-${{ hashFiles('tools/model-conversion/build_packs.py') }}
 
       - name: Build packs
         if: steps.check.outputs.skip != 'true'
@@ -87,6 +99,8 @@ jobs:
             | rescale-pack-photo-pro.zip | Pro photo upscaler (Real-ESRGAN x4plus, BSD-3-Clause) |
             | rescale-pack-anime-pro.zip | Pro anime upscaler (Real-ESRGAN x4plus anime 6B, BSD-3-Clause) |
             | rescale-pack-faces.zip | Faces stage (GFPGAN v1.4, Apache-2.0 + RetinaFace, MIT) |
+            | rescale-pack-repair.zip | Repair stage (MI-GAN inpainting, MIT + old-photo damage detector, MIT) |
+            | rescale-pack-generative.zip | Generative upscaler (AdcSR: code Apache-2.0, weights CreativeML Open RAIL++-M with use restrictions) |
 
             Each release holds only the packs built for it; older packs stay in earlier
             models-vN releases. Checksums are in packs.json and built into the app.

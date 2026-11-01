@@ -37,7 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.rescale.RescaleViewModel
 import app.rescale.worker.JobState
 
-private enum class Screen { Home, Editor, Running, Result, Models, Batch }
+private enum class Screen { Home, Editor, Running, Result, Models, Batch, Mask }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,11 +73,13 @@ fun RescaleApp(vm: RescaleViewModel) {
     }
 
     BackHandler(enabled = showModels || showBatch) { showModels = false; showBatch = false }
+    BackHandler(enabled = state.editingMask && !showModels && !showBatch) { vm.cancelMask() }
 
     val screen = when {
         showModels -> Screen.Models
         showBatch -> Screen.Batch
         job is JobState.Running -> Screen.Running
+        state.editingMask && state.input?.thumbnail != null -> Screen.Mask
         job is JobState.Done && !state.resultDismissed -> Screen.Result
         state.input != null -> Screen.Editor
         else -> Screen.Home
@@ -98,6 +100,7 @@ fun RescaleApp(vm: RescaleViewModel) {
                         when (screen) {
                             Screen.Models -> "Model packs"
                             Screen.Batch -> "Batch"
+                            Screen.Mask -> "Repair: mark damage"
                             else -> "Rescale"
                         },
                     )
@@ -106,6 +109,10 @@ fun RescaleApp(vm: RescaleViewModel) {
                     if (screen == Screen.Models || screen == Screen.Batch) {
                         IconButton(onClick = { showModels = false; showBatch = false }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close model packs")
+                        }
+                    } else if (screen == Screen.Mask) {
+                        IconButton(onClick = vm::cancelMask) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to settings")
                         }
                     } else if (screen == Screen.Editor) {
                         IconButton(onClick = vm::newImage) {
@@ -179,6 +186,8 @@ fun RescaleApp(vm: RescaleViewModel) {
                     onOpenModels = { showModels = true },
                     onFinishBicubic = vm::setFinishWithBicubic,
                     onFaceStrength = vm::setFaceStrength,
+                    onGenerative = vm::setGenerative,
+                    onEditMask = vm::editMask,
                     batchActive = batchItems.any {
                         it.state == app.rescale.worker.BatchItem.State.QUEUED || it.state == app.rescale.worker.BatchItem.State.RUNNING
                     },
@@ -186,6 +195,16 @@ fun RescaleApp(vm: RescaleViewModel) {
                     onDismissError = vm::dismissError,
                 )
                 Screen.Running -> RunningScreen(job as JobState.Running, state.input?.thumbnail, vm::cancel)
+                Screen.Mask -> state.input?.let { input ->
+                    MaskEditorScreen(
+                        image = input.thumbnail!!,
+                        detected = input.damage?.mask,
+                        initialStrokes = state.repairStrokes,
+                        initialAutoDetect = state.autoDamage,
+                        onDone = vm::saveMask,
+                        onCancel = vm::cancelMask,
+                    )
+                }
                 Screen.Models -> ModelsScreen(
                     packs = packs,
                     published = vm.packsPublished,
@@ -193,6 +212,7 @@ fun RescaleApp(vm: RescaleViewModel) {
                     onCancel = vm::cancelDownload,
                     onDelete = vm::deletePack,
                     onImport = { importer.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                    deviceRamGb = vm.deviceRamGb,
                 )
                 Screen.Result -> ResultScreen(
                     done = job as JobState.Done,
@@ -241,11 +261,15 @@ private const val LICENSES_TEXT =
     "Rescale is GPL-3.0. Bundled models:\n\n" +
         "• realesr-general-x4v3 (photos): BSD-3-Clause, © Xintao Wang (Real-ESRGAN)\n" +
         "• realesr-animevideov3 x2/x4 (anime & art): BSD-3-Clause, © Xintao Wang (Real-ESRGAN)\n\n" +
+        "Optional packs: FBCNN (Apache-2.0), Real-ESRGAN x4plus (BSD-3-Clause), GFPGAN v1.4 (Apache-2.0), " +
+        "RetinaFace/facexlib (MIT), MI-GAN (MIT, Picsart AI Research), old-photo damage detector " +
+        "(MIT, Microsoft \"Bringing Old Photos Back to Life\"), AdcSR (code Apache-2.0; weights derived from " +
+        "Stable Diffusion 2.1 under CreativeML Open RAIL++-M, with use restrictions).\n\n" +
         "Runtime: ncnn by Tencent (BSD-3-Clause)."
 
 private const val ABOUT_TEXT =
-    "Rescale upscales images entirely on your phone. It has no internet permission, no accounts, " +
-        "no ads, no analytics and no watermarks.\n\n" +
+    "Rescale upscales and repairs images entirely on your phone. It only goes online when you " +
+        "download a model pack. No accounts, ads, analytics or watermarks.\n\n" +
         "Upscaling invents plausible detail. It doesn't recover what was never captured, so don't " +
         "treat results as evidence (faces and text especially).\n\n" +
         "Source: github.com/EmotionalLeaves/Rescale"

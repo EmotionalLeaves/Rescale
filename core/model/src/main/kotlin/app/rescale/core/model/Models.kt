@@ -48,6 +48,12 @@ data class ModelSpec(
     val pad: Int = 12,
     /** Runs natively without a network file (plain bicubic). */
     val builtin: Boolean = false,
+    /** Network works in [-1,1] (feeds in*2-1). */
+    val signedRange: Boolean = false,
+    /** Match each output tile's mean/contrast to its input tile (generative models drift). */
+    val statMatch: Boolean = false,
+    /** Big network: skip ncnn's weight transforms (winograd/sgemm), which multiply memory 2–4×. */
+    val lowMemory: Boolean = false,
 ) {
     val paramFile get() = "$id.param"
     val binFile get() = "$id.bin"
@@ -99,7 +105,29 @@ object PackModels {
         "https://github.com/xinntao/facexlib", packId = Packs.FACES,
     )
 
-    val all = listOf(FBCNN, DENOISE_50, DENOISE_100, X4PLUS, X4PLUS_ANIME, GFPGAN, RETINAFACE)
+    /**
+     * AdcSR: Stable Diffusion 2.1 distilled into a one-step, prompt-free 4× upscaler. Trained on
+     * 128-px tiles, so tiles are 96 + 2×16 padding.
+     */
+    val ADCSR = ModelSpec(
+        "adcsr-x4", "AdcSR (generative, one-step diffusion)", 4, "in0", "out0", "CreativeML Open RAIL++-M",
+        "https://github.com/Guaishou74851/AdcSR", packId = Packs.GENERATIVE, alignment = 16, tile = 96, pad = 16,
+        signedRange = true, statMatch = true, lowMemory = true,
+    )
+
+    /** Scratch/tear detector from Microsoft's "Bringing Old Photos Back to Life" (not a tiled pass). */
+    val SCRATCH = ModelSpec(
+        "scratch-detect", "Old-photo damage detector", 1, "in0", "out0", "MIT",
+        "https://github.com/microsoft/Bringing-Old-Photos-Back-to-Life", packId = Packs.REPAIR,
+    )
+
+    /** MI-GAN inpainting on 512² windows (not a tiled pass). */
+    val MIGAN = ModelSpec(
+        "migan-512", "MI-GAN (inpainting)", 1, "in0", "out0", "MIT",
+        "https://github.com/Picsart-AI-Research/MI-GAN", packId = Packs.REPAIR,
+    )
+
+    val all = listOf(FBCNN, DENOISE_50, DENOISE_100, X4PLUS, X4PLUS_ANIME, GFPGAN, RETINAFACE, ADCSR, SCRATCH, MIGAN)
 }
 
 object Packs {
@@ -108,8 +136,19 @@ object Packs {
     const val PHOTO_PRO = "photo-pro"
     const val ANIME_PRO = "anime-pro"
     const val FACES = "faces"
+    const val REPAIR = "repair"
+    const val GENERATIVE = "generative"
 
-    data class Info(val id: String, val name: String, val description: String, val enables: String)
+    data class Info(
+        val id: String,
+        val name: String,
+        val description: String,
+        val enables: String,
+        /** Terms the user must accept before downloading (model licence with use restrictions). */
+        val terms: String? = null,
+        /** Devices with less RAM can't load it. */
+        val minRamGb: Int = 0,
+    )
 
     val all = listOf(
         Info(JPEG, "JPEG repair", "FBCNN removes blocks, ringing and colour bleeding from compressed images before upscaling.", "De-JPEG stage"),
@@ -117,13 +156,39 @@ object Packs {
         Info(PHOTO_PRO, "Photo Pro", "Real-ESRGAN x4plus: stronger texture than the built-in model, but about 15–20× slower.", "Pro quality (Photo)"),
         Info(FACES, "Face restore", "GFPGAN restores small or blurry faces (RetinaFace finds them). Restored faces are partly invented.", "Faces stage"),
         Info(ANIME_PRO, "Anime Pro", "Real-ESRGAN x4plus anime 6B: crisper line art than the built-in model, slower.", "Pro quality (Anime)"),
+        Info(
+            REPAIR, "Repair",
+            "Finds scratches, cracks, tears and spots on old photos and fills them in (MI-GAN). You can also paint over anything you want removed.",
+            "Repair stage",
+        ),
+        Info(
+            GENERATIVE, "Generative detail",
+            "AdcSR, a one-step diffusion model: invents realistic hair, skin, fabric and foliage where other models smear. " +
+                "Much slower (about 1–3 s per tile on a recent GPU) and it changes details, so don't use it where accuracy matters.",
+            "Generative (Photo)",
+            terms = GENERATIVE_TERMS,
+            minRamGb = 6,
+        ),
     )
+
+    /** Shown before downloading the generative pack: its weights inherit Stable Diffusion's licence. */
+    const val GENERATIVE_TERMS =
+        "AdcSR's weights are derived from Stable Diffusion 2.1 and come under the CreativeML Open RAIL++-M licence. " +
+            "By downloading you agree not to use the model or its output: to break the law; to exploit or harm minors; " +
+            "to generate or spread verifiably false information meant to harm others; to generate or spread personal " +
+            "information that could harm someone; to defame, disparage or harass people; for fully automated decisions " +
+            "that affect someone's legal rights; to discriminate against people or groups; to exploit vulnerable groups; " +
+            "to provide medical advice or interpret medical results; or for law enforcement, justice, immigration or " +
+            "asylum processes such as predicting that someone will commit a crime. The full licence is included in the pack " +
+            "(LICENSE.txt) and at huggingface.co/stabilityai/stable-diffusion-2-1-base."
+
 
     fun models(packId: String) = PackModels.all.filter { it.packId == packId }
 }
 
 /** Optional restoration stages that run before (or change) the upscale. */
 enum class Stage(val label: String, val packId: String) {
+    REPAIR("Repair", Packs.REPAIR),
     DE_JPEG("De-JPEG", Packs.JPEG),
     DENOISE("Denoise", Packs.DENOISE),
     FACES("Faces", Packs.FACES),
@@ -145,6 +210,12 @@ data class JobSettings(
     val finishWithBicubic: Boolean = false,
     /** Blend of restored faces over the upscale (Faces stage), 0..1. */
     val faceStrength: Float = 0.6f,
+    /** Use the generative upscaler for the first 4× (Photo mode, if its pack is installed). */
+    val generative: Boolean = false,
+    /** Repair stage: detect damage automatically (else only the painted mask is filled). */
+    val autoDamage: Boolean = true,
+    /** Repair stage: path of a painted mask (ALPHA_8 PNG over the oriented image, any size). */
+    val repairMask: String? = null,
 )
 
 /** One pass of the native chain. */
@@ -217,6 +288,8 @@ object Planner {
 
     private fun upscaler(s: JobSettings, packs: Set<String>, factor: Int, firstPass: Boolean): ModelSpec = when (s.mode) {
         Mode.PHOTO -> when {
+            // One generative pass invents the texture; further passes would hallucinate on top of it.
+            firstPass && s.generative && Packs.GENERATIVE in packs -> PackModels.ADCSR
             firstPass && Stage.DENOISE in s.stages && Packs.DENOISE in packs ->
                 if (s.strongDenoise) PackModels.DENOISE_100 else PackModels.DENOISE_50
             s.pro && Packs.PHOTO_PRO in packs -> PackModels.X4PLUS

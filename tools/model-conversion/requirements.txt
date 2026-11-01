@@ -1,6 +1,10 @@
 torch>=2.3
 torchvision
-pnnx>=20240410
-ncnn>=1.0.20240410
+pnnx==20261020
+ncnn==1.0.20261020
 numpy
 pillow
+# repair + generative packs
+diffusers>=0.32
+opencv-python-headless
+scikit-image

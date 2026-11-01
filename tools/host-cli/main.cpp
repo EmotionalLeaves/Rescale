@@ -7,6 +7,10 @@
 //               [--faces <retinaface-base> <gfpgan-base>] [--face-strength 0..1]
 //               [--repeat K]  (chain the upscaler K times)
 //               [--dejpeg <fbcnn-model-base> <quality 1..100>]   (1× FBCNN pre-pass)
+//               [--pad P] [--align A] [--norm MUL ADD] [--statmatch 0|1] [--lowmem 0|1]   (runner options, e.g. AdcSR)
+//               [--repair <detector-base|-> <inpainter-base>] [--mask mask.gray]   (damage repair pre-stage;
+//                  mask.gray: w*h bytes, nonzero = fill; detector "-" = only the given mask)
+//               [--save-repaired out.png]
 //
 // <in.rgba> is raw 8-bit RGBA (see compare_tiling.py, which also prepares it).
 #include <chrono>
@@ -14,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,6 +26,7 @@
 #include "core/engine.h"
 #include "core/sinks.h"
 #include "face_restorer.h"
+#include "repairer.h"
 #include "ncnn_runner.h"
 
 using namespace rescale;
@@ -40,6 +46,9 @@ int main(int argc, char** argv) {
     std::string faceDet, faceGen;
     float faceStrength = 0.7f;
     int quality = 50;
+    int pad = 12, align = 1, statMatch = 0, lowMem = 0;
+    float normMul = 1.f, normAdd = 0.f;
+    std::string repDet, repNet, maskPath, savedRepaired;
     for (int i = 9; i + 1 < argc; i += 2) {
         if (!std::strcmp(argv[i], "--orientation")) orientation = std::atoi(argv[i + 1]);
         else if (!std::strcmp(argv[i], "--downsample")) downsample = std::atoi(argv[i + 1]);
@@ -53,6 +62,22 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--faces") && i + 2 < argc) {
             faceDet = argv[i + 1];
             faceGen = argv[i + 2];
+            ++i;
+        }
+        else if (!std::strcmp(argv[i], "--pad")) pad = std::atoi(argv[i + 1]);
+        else if (!std::strcmp(argv[i], "--align")) align = std::atoi(argv[i + 1]);
+        else if (!std::strcmp(argv[i], "--statmatch")) statMatch = std::atoi(argv[i + 1]);
+        else if (!std::strcmp(argv[i], "--lowmem")) lowMem = std::atoi(argv[i + 1]);
+        else if (!std::strcmp(argv[i], "--mask")) maskPath = argv[i + 1];
+        else if (!std::strcmp(argv[i], "--save-repaired")) savedRepaired = argv[i + 1];
+        else if (!std::strcmp(argv[i], "--norm") && i + 2 < argc) {
+            normMul = static_cast<float>(std::atof(argv[i + 1]));
+            normAdd = static_cast<float>(std::atof(argv[i + 2]));
+            ++i;
+        }
+        else if (!std::strcmp(argv[i], "--repair") && i + 2 < argc) {
+            repDet = argv[i + 1];
+            repNet = argv[i + 2];
             ++i;
         }
         else if (!std::strcmp(argv[i], "--dejpeg") && i + 2 < argc) {
@@ -70,11 +95,65 @@ int main(int argc, char** argv) {
     }
 
     NcnnRunner runner(scale, false, threads, argv[2], argv[3]);
+    runner.setLowMemory(lowMem != 0);
     if (!runner.load(base + ".param", base + ".bin")) {
         std::fprintf(stderr, "can't load model %s\n", base.c_str());
         return 1;
     }
-    Image img(px.data(), w, h, w * 4, orientation);
+    runner.setAlignment(align);
+    runner.setNormalization(normMul, normAdd);
+    runner.setStatMatch(statMatch != 0);
+    Image oriented(px.data(), w, h, w * 4, orientation);
+    // Damage repair works on an oriented copy, which then feeds the chain.
+    std::vector<uint8_t> repaired;
+    std::unique_ptr<Image> repairedImg;
+    if (!repNet.empty()) {
+        const int W = oriented.width(), H = oriented.height();
+        std::vector<uint8_t> mask(static_cast<size_t>(W) * H, 0);
+        const auto tr = std::chrono::steady_clock::now();
+        if (repDet != "-") {
+            ScratchDetector det(false, threads);
+            if (!det.load(repDet + ".param", repDet + ".bin") || !det.detect(oriented, mask)) {
+                std::fprintf(stderr, "scratch detection failed\n");
+                return 1;
+            }
+        }
+        if (!maskPath.empty()) {
+            std::ifstream mf(maskPath, std::ios::binary);
+            std::vector<uint8_t> user(mask.size());
+            if (!mf.read(reinterpret_cast<char*>(user.data()), static_cast<std::streamsize>(user.size()))) {
+                std::fprintf(stderr, "can't read mask %s\n", maskPath.c_str());
+                return 1;
+            }
+            for (size_t i = 0; i < mask.size(); ++i) mask[i] |= user[i] ? 1 : 0;
+        }
+        size_t holes = 0;
+        for (uint8_t m : mask) holes += m;
+        repaired.resize(static_cast<size_t>(W) * H * 4);
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x) std::memcpy(&repaired[(static_cast<size_t>(y) * W + x) * 4], oriented.at(x, y), 4);
+        NcnnInpainter inp(false, threads);
+        if (!inp.load(repNet + ".param", repNet + ".bin")) {
+            std::fprintf(stderr, "can't load inpainter\n");
+            return 1;
+        }
+        const Status rs = repairImage(repaired, W, H, mask, inp, [](int d, int t) { std::fprintf(stderr, "\rrepair %d/%d", d, t); },
+                                      nullptr);
+        std::fprintf(stderr, "\nrepair: %.2f%% of pixels, status %d, %.2fs\n", 100.0 * holes / mask.size(), rs,
+                     std::chrono::duration<double>(std::chrono::steady_clock::now() - tr).count());
+        if (rs != kOk) return 1;
+        if (!savedRepaired.empty()) {
+            PngWriter pw(savedRepaired, W, H, 3);
+            std::vector<uint8_t> row(static_cast<size_t>(W) * 3);
+            for (int y = 0; y < H; ++y) {
+                for (int x = 0; x < W; ++x) std::memcpy(&row[x * 3], &repaired[(static_cast<size_t>(y) * W + x) * 4], 3);
+                pw.push(row.data());
+            }
+            pw.finish();
+        }
+        repairedImg = std::make_unique<Image>(repaired.data(), W, H, W * 4, 1);
+    }
+    const Image& img = repairedImg ? *repairedImg : oriented;
     std::vector<PassSpec> passes;
     std::unique_ptr<NcnnRunner> fb;
     if (!dejpeg.empty()) {
@@ -97,6 +176,8 @@ int main(int argc, char** argv) {
         PassSpec up;
         up.runner = &runner;
         up.opt.tile = tile;
+        up.opt.pad = pad;
+        up.opt.overlap = std::max(16, pad);
         up.opt.post = post;
         if (k > 0) {
             up.opt.post.preBlur = 0.4f;

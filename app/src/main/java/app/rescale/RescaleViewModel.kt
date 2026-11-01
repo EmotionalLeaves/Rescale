@@ -28,6 +28,8 @@ import app.rescale.engine.pipeline.Exported
 import app.rescale.engine.pipeline.Exporter
 import app.rescale.engine.pipeline.Gallery
 import app.rescale.engine.pipeline.FaceProbe
+import app.rescale.engine.pipeline.DamageProbe
+import app.rescale.engine.pipeline.DamagePreview
 import app.rescale.engine.pipeline.ImageAnalyzer
 import app.rescale.engine.pipeline.PackStore
 import app.rescale.core.model.Packs
@@ -61,7 +63,12 @@ data class InputState(
     val thumbnail: Bitmap?,
     val analysis: Analysis? = null,
     val displayName: String? = null,
+    /** Damage detected on [thumbnail] (Repair pack installed). */
+    val damage: DamagePreview? = null,
 )
+
+/** One brush stroke in the mask editor, in image coordinates normalised to 0..1. */
+data class MaskStroke(val points: List<Pair<Float, Float>>, val radius: Float, val erase: Boolean)
 
 data class EditorState(
     val input: InputState? = null,
@@ -86,23 +93,36 @@ data class EditorState(
     val forceCpu: Boolean = false,
     val gentle: Boolean = false,
     val exporting: Boolean = false,
+    val generative: Boolean = false,
+    /** The generative pack is installed and this phone has the RAM for it. */
+    val generativeCapable: Boolean = false,
+    val autoDamage: Boolean = true,
+    val repairStrokes: List<MaskStroke> = emptyList(),
+    val editingMask: Boolean = false,
 ) {
     val estimate: OutputEstimate? get() = input?.let { OutputEstimate.of(it.info.width, it.info.height, scale) }
     /** What Auto would pick now (re-evaluated when packs are installed). */
     val autoPlan: AutoPlan?
         get() = input?.analysis?.let { a ->
-            AutoPlanner.plan(a, Stage.entries.filter { it.packId in installedPacks }.toSet())
+            AutoPlanner.plan(a, Stage.entries.filter { it.packId in installedPacks }.toSet(), generativeCapable)
         }
     val settings: JobSettings
-        get() = JobSettings(mode, scale, tuning, stages, pro, jpegQuality, strongDenoise, finishWithBicubic, faceStrength)
+        get() = JobSettings(
+            mode, scale, tuning, stages, pro, jpegQuality, strongDenoise, finishWithBicubic, faceStrength,
+            generative = generative && generativeCapable && mode == Mode.PHOTO,
+            autoDamage = autoDamage,
+        )
+    val generativeAvailable: Boolean get() = generativeCapable && mode == Mode.PHOTO
     val proAvailable: Boolean
         get() = (if (mode == Mode.PHOTO) Packs.PHOTO_PRO else Packs.ANIME_PRO) in installedPacks
     val tooLarge: Boolean get() = input?.let { it.info.width.toLong() * it.info.height > Limits.MAX_INPUT_PIXELS } ?: false
 }
 
 private fun EditorState.applying(s: JobSettings) = copy(
-    mode = s.mode, scale = s.scale, tuning = s.tuning, stages = s.stages, auto = true,
-    jpegQuality = s.jpegQuality, strongDenoise = s.strongDenoise,
+    mode = s.mode, scale = s.scale, tuning = s.tuning,
+    // Repair is never picked by Auto, but a repair the user set up survives re-applying Auto.
+    stages = (s.stages + stages.filter { it == Stage.REPAIR }).distinct().sortedBy { it.ordinal }, auto = true,
+    jpegQuality = s.jpegQuality, strongDenoise = s.strongDenoise, generative = s.generative,
 )
 
 data class PackUi(val info: Packs.Info, val installed: Boolean, val sizeBytes: Long, val download: PackDownload)
@@ -112,8 +132,24 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     private val backends = BackendSelector(app, BuildConfig.VERSION_CODE.toLong())
 
     private val packStore = PackStore(app)
+
+    /** Total RAM in whole GB (rounded up: an "8 GB" phone reports a little less). */
+    val deviceRamGb: Int = run {
+        val am = app.getSystemService(android.app.ActivityManager::class.java)
+        val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        ((mi.totalMem + (512L shl 20)) shr 30).toInt()
+    }
+
+    private fun generativeCapable(installed: Set<String>) =
+        Packs.GENERATIVE in installed && deviceRamGb >= (Packs.all.first { it.id == Packs.GENERATIVE }.minRamGb)
+
     private val _state = MutableStateFlow(
-        EditorState(forceCpu = backends.forceCpu, gentle = backends.gentle, installedPacks = packStore.installed()),
+        packStore.installed().let { installed ->
+            EditorState(
+                forceCpu = backends.forceCpu, gentle = backends.gentle, installedPacks = installed,
+                generativeCapable = generativeCapable(installed),
+            )
+        },
     )
     val state: StateFlow<EditorState> = _state.asStateFlow()
 
@@ -139,7 +175,11 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
         val installed = packStore.installed()
         _state.update { s ->
             // Drop stages/pro whose pack disappeared.
-            val next = s.copy(installedPacks = installed, stages = s.stages.filter { it.packId in installed })
+            val capable = generativeCapable(installed)
+            val next = s.copy(
+                installedPacks = installed, stages = s.stages.filter { it.packId in installed },
+                generativeCapable = capable, generative = s.generative && capable,
+            )
             // New packs can change what Auto would do.
             val plan = next.autoPlan
             if (next.auto && plan != null && installed != s.installedPacks) next.applying(plan.settings) else next
@@ -222,17 +262,23 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
                     val local = Uri.fromFile(copy)
                     val info = ImageLoader.info(ctx, local)
                     val faces = FaceProbe.smallFaces(ctx, local, info, packStore)
-                    val analysis = ImageAnalyzer.analyze(ctx, local, info)?.copy(smallFaces = faces)
+                    val thumb = ImageLoader.decodePreview(ctx, local, 1600)
+                    val damage = DamageProbe.detect(ctx, thumb, packStore)
+                    val analysis = ImageAnalyzer.analyze(ctx, local, info)
+                        ?.copy(smallFaces = faces, damage = damage?.coverage ?: 0f)
                     val name = runCatching {
                         ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
                             ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
                     }.getOrNull()
-                    InputState(local, info, ImageLoader.decodePreview(ctx, local, 1600), analysis, name)
+                    InputState(local, info, thumb, analysis, name, damage)
                 }
             }
             result.onSuccess { input ->
                 _state.update {
-                    val base = it.copy(input = input, loadingInput = false, resultDismissed = true, after = null, before = null)
+                    val base = it.copy(
+                        input = input, loadingInput = false, resultDismissed = true, after = null, before = null,
+                        stages = it.stages - Stage.REPAIR, repairStrokes = emptyList(), autoDamage = true, editingMask = false,
+                    )
                     val plan = base.autoPlan
                     if (it.auto && plan != null) base.applying(plan.settings) else base
                 }
@@ -255,8 +301,62 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
         s.applying(plan.settings)
     }
 
-    fun toggleStage(stage: Stage) = _state.update {
-        it.copy(stages = if (stage in it.stages) it.stages - stage else (it.stages + stage).sortedBy { s -> s.ordinal })
+    fun toggleStage(stage: Stage) {
+        // Turning Repair on opens the mask editor so the user sees what will be filled.
+        if (stage == Stage.REPAIR && stage !in _state.value.stages) {
+            _state.update { it.copy(editingMask = true) }
+            return
+        }
+        _state.update {
+            it.copy(stages = if (stage in it.stages) it.stages - stage else (it.stages + stage).sortedBy { s -> s.ordinal })
+        }
+    }
+
+    fun setGenerative(v: Boolean) = _state.update { it.copy(generative = v, auto = false) }
+
+    fun editMask() = _state.update { it.copy(editingMask = true) }
+    fun cancelMask() = _state.update { it.copy(editingMask = false) }
+
+    /** Saves the editor's result and switches Repair on. */
+    fun saveMask(strokes: List<MaskStroke>, autoDetect: Boolean) = _state.update {
+        it.copy(
+            repairStrokes = strokes, autoDamage = autoDetect, editingMask = false,
+            stages = (it.stages + Stage.REPAIR).distinct().sortedBy { s -> s.ordinal },
+        )
+    }
+
+    /** Renders the painted strokes over the oriented image (red = fill, green = keep), or null. */
+    private fun renderMask(s: EditorState): String? {
+        if (s.repairStrokes.isEmpty() || Stage.REPAIR !in s.stages) return null
+        val info = s.input?.info ?: return null
+        val k = minOf(1f, 2048f / maxOf(info.width, info.height))
+        val w = maxOf(1, (info.width * k).toInt())
+        val h = maxOf(1, (info.height * k).toInt())
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        for (st in s.repairStrokes) {
+            val paint = android.graphics.Paint().apply {
+                isAntiAlias = false
+                color = if (st.erase) 0xFF00FF00.toInt() else 0xFFFF0000.toInt()
+                xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
+                strokeWidth = 2 * st.radius * w
+                strokeCap = android.graphics.Paint.Cap.ROUND
+                strokeJoin = android.graphics.Paint.Join.ROUND
+                style = android.graphics.Paint.Style.STROKE
+            }
+            if (st.points.size == 1) {
+                paint.style = android.graphics.Paint.Style.FILL
+                c.drawCircle(st.points[0].first * w, st.points[0].second * h, st.radius * w, paint)
+            } else {
+                val path = android.graphics.Path()
+                st.points.forEachIndexed { i, (x, y) -> if (i == 0) path.moveTo(x * w, y * h) else path.lineTo(x * w, y * h) }
+                c.drawPath(path, paint)
+            }
+        }
+        val f = File(ctx.filesDir, "input/repair-mask.png")
+        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bmp.recycle()
+        return f.path
     }
 
 
@@ -284,7 +384,10 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
         if (s.tooLarge) return
         _state.update { it.copy(resultDismissed = false, after = null, error = null) }
         loadedResultFor = null
-        UpscaleWorker.enqueue(ctx, input.uri, s.settings)
+        viewModelScope.launch {
+            val mask = withContext(Dispatchers.IO) { runCatching { renderMask(s) }.getOrNull() }
+            UpscaleWorker.enqueue(ctx, input.uri, s.settings.copy(repairMask = mask))
+        }
     }
 
     fun cancel() = UpscaleWorker.cancel(ctx)
@@ -295,7 +398,12 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     fun newImage() {
         UpscaleWorker.clear(ctx)
         loadedResultFor = null
-        _state.update { EditorState(forceCpu = it.forceCpu, gentle = it.gentle, installedPacks = it.installedPacks) }
+        _state.update {
+            EditorState(
+                forceCpu = it.forceCpu, gentle = it.gentle, installedPacks = it.installedPacks,
+                generativeCapable = it.generativeCapable,
+            )
+        }
     }
 
     private suspend fun loadResult(done: JobState.Done) {

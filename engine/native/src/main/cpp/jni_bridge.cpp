@@ -15,6 +15,11 @@
 #include "core/sinks.h"
 #include "face_restorer.h"
 #include "ncnn_runner.h"
+#include "repairer.h"
+
+#include <sys/stat.h>
+#include <cstdio>
+#include <cstring>
 
 #define LOG_TAG "RescaleNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -40,6 +45,49 @@ std::string str(JNIEnv* env, jstring s) {
 
 Handle* from(jlong h) { return reinterpret_cast<Handle*>(h); }
 
+// Applies a painted mask bitmap (any size, over the oriented image) to `mask` (W×H).
+// ALPHA_8: opaque = add. RGBA_8888: opaque red = add, opaque green = erase (keep, even if the
+// detector flagged it). Nearest-neighbour: brush strokes are already soft enough.
+bool addMaskBitmap(JNIEnv* env, jobject bitmap, int W, int H, std::vector<uint8_t>& mask) {
+    AndroidBitmapInfo info;
+    void* pixels = nullptr;
+    if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS) return false;
+    const bool alpha8 = info.format == ANDROID_BITMAP_FORMAT_A_8;
+    if (!alpha8 && info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) return false;
+    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS) return false;
+    const auto* px = static_cast<const uint8_t*>(pixels);
+    const int mw = static_cast<int>(info.width), mh = static_cast<int>(info.height);
+    for (int y = 0; y < H; ++y) {
+        const int sy = std::min(mh - 1, static_cast<int>((y + 0.5f) * mh / H));
+        const uint8_t* row = px + static_cast<size_t>(sy) * info.stride;
+        for (int x = 0; x < W; ++x) {
+            const int sx = std::min(mw - 1, static_cast<int>((x + 0.5f) * mw / W));
+            const uint8_t a = alpha8 ? row[sx] : row[sx * 4 + 3];
+            if (a < 128) continue;
+            const bool erase = !alpha8 && row[sx * 4 + 1] >= 128 && row[sx * 4] < 128;
+            mask[static_cast<size_t>(y) * W + x] = erase ? 0 : 1;
+        }
+    }
+    AndroidBitmap_unlockPixels(env, bitmap);
+    return true;
+}
+
+bool readFile(const std::string& path, std::vector<uint8_t>& buf) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    const bool ok = std::fread(buf.data(), 1, buf.size(), f) == buf.size();
+    std::fclose(f);
+    return ok;
+}
+
+bool writeFile(const std::string& path, const std::vector<uint8_t>& buf) {
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return false;
+    bool ok = std::fwrite(buf.data(), 1, buf.size(), f) == buf.size();
+    ok = std::fclose(f) == 0 && ok;
+    return ok;
+}
+
 }  // namespace
 
 extern "C" {
@@ -52,9 +100,10 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeGpuCount(JNIEnv*, jobjec
 JNIEXPORT jlong JNICALL
 Java_app_rescale_engine_nativebridge_NativeEngine_nativeCreate(JNIEnv* env, jobject, jstring param, jstring bin,
                                                                jstring inBlob, jstring outBlob, jint scale,
-                                                               jboolean gpu, jint threads) {
+                                                               jboolean gpu, jint threads, jboolean lowMemory) {
     auto h = std::make_unique<Handle>();
     auto r = std::make_unique<NcnnRunner>(scale, gpu, threads, str(env, inBlob), str(env, outBlob));
+    r->setLowMemory(lowMemory);
     if (!r->load(str(env, param), str(env, bin))) {
         LOGE("failed to load model %s", str(env, param).c_str());
         return 0;
@@ -111,6 +160,75 @@ JNIEXPORT void JNICALL
 Java_app_rescale_engine_nativebridge_NativeEngine_nativeSetNormalization(JNIEnv*, jobject, jlong handle, jfloat mul,
                                                                          jfloat add) {
     if (handle && from(handle)->ncnn) from(handle)->ncnn->setNormalization(mul, add);
+}
+
+JNIEXPORT void JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeSetStatMatch(JNIEnv*, jobject, jlong handle, jboolean on) {
+    if (handle && from(handle)->ncnn) from(handle)->ncnn->setStatMatch(on);
+}
+
+JNIEXPORT jlong JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeCreateScratchDetector(JNIEnv* env, jobject, jstring param,
+                                                                              jstring bin, jboolean gpu, jint threads) {
+    auto d = std::make_unique<ScratchDetector>(gpu, threads);
+    if (!d->load(str(env, param), str(env, bin))) return 0;
+    return reinterpret_cast<jlong>(d.release());
+}
+
+JNIEXPORT void JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeDestroyScratchDetector(JNIEnv*, jobject, jlong h) {
+    delete reinterpret_cast<ScratchDetector*>(h);
+}
+
+// Damage mask of a (preview) bitmap into `out` (ALPHA_8, same size; 255 = damage). Returns the
+// share flagged by the fine pass (Auto's damage score), or -1 on failure. The mask is shown in
+// the mask editor.
+JNIEXPORT jfloat JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeScratchMask(JNIEnv* env, jobject, jlong h, jobject bitmap,
+                                                                    jint orientation, jobject outBitmap) {
+    if (!h) return -1.f;
+    AndroidBitmapInfo info, oinfo;
+    void* pixels = nullptr;
+    if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
+        AndroidBitmap_getInfo(env, outBitmap, &oinfo) != ANDROID_BITMAP_RESULT_SUCCESS ||
+        info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || oinfo.format != ANDROID_BITMAP_FORMAT_A_8)
+        return -1.f;
+    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS) return -1.f;
+    std::vector<uint8_t> mask;
+    int W, H;
+    bool ok;
+    float fine = 0.f;
+    {
+        Image img(static_cast<const uint8_t*>(pixels), static_cast<int>(info.width), static_cast<int>(info.height),
+                  static_cast<int>(info.stride), orientation);
+        W = img.width();
+        H = img.height();
+        ok = reinterpret_cast<ScratchDetector*>(h)->detect(img, mask, 512, 0.4f, &fine);
+    }
+    AndroidBitmap_unlockPixels(env, bitmap);
+    if (!ok || static_cast<int>(oinfo.width) != W || static_cast<int>(oinfo.height) != H) return -1.f;
+    void* out = nullptr;
+    if (AndroidBitmap_lockPixels(env, outBitmap, &out) != ANDROID_BITMAP_RESULT_SUCCESS) return -1.f;
+    for (int y = 0; y < H; ++y) {
+        uint8_t* row = static_cast<uint8_t*>(out) + static_cast<size_t>(y) * oinfo.stride;
+        for (int x = 0; x < W; ++x) row[x] = mask[static_cast<size_t>(y) * W + x] ? 255 : 0;
+    }
+    AndroidBitmap_unlockPixels(env, outBitmap);
+    return fine;
+}
+
+JNIEXPORT jlong JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeCreateInpainter(JNIEnv* env, jobject, jstring param,
+                                                                        jstring bin, jboolean gpu, jint threads) {
+    auto p = std::make_unique<NcnnInpainter>(gpu, threads);
+    if (!p->load(str(env, param), str(env, bin))) return 0;
+    LOGI("inpainter loaded, gpu=%d", p->usingGpu());
+    return reinterpret_cast<jlong>(p.release());
+}
+
+JNIEXPORT void JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeDestroyInpainter(JNIEnv*, jobject, jlong h) {
+    delete reinterpret_cast<NcnnInpainter*>(h);
 }
 
 JNIEXPORT jlong JNICALL
@@ -181,7 +299,8 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeRunChain(
     jfloatArray jDetails, jbooleanArray jLuma, jbooleanArray jColorFix, jfloatArray jPreBlur, jobject bitmap,
     jint orientation,
     jlong maxBandBytes, jstring tmpDir, jstring outPath, jstring previewPath, jint previewMax, jobject listener,
-    jlong detector, jlong gfpgan, jfloat faceStrength, jfloat maxFacePx) {
+    jlong detector, jlong gfpgan, jfloat faceStrength, jfloat maxFacePx, jlong scratchDetector, jlong inpainter,
+    jobject repairMask) {
     const jsize n = env->GetArrayLength(jHandles);
     if (n <= 0) return kModelError;
     std::vector<jlong> handles(n);
@@ -223,8 +342,8 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeRunChain(
 
     ChainResult res;
     {
-        Image img(static_cast<const uint8_t*>(pixels), static_cast<int>(info.width), static_cast<int>(info.height),
-                  static_cast<int>(info.stride), orientation);
+        Image oriented(static_cast<const uint8_t*>(pixels), static_cast<int>(info.width), static_cast<int>(info.height),
+                       static_cast<int>(info.stride), orientation);
         const std::string out = str(env, outPath), prevPath = str(env, previewPath);
         const int pmax = std::max(1, static_cast<int>(previewMax));
         std::unique_ptr<PngWriter> main, prevPng;
@@ -244,8 +363,14 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeRunChain(
             return tee.get();
         };
 
-        jmethodID onProgress = nullptr;
-        if (listener) onProgress = env->GetMethodID(env->GetObjectClass(listener), "onProgress", "(II)V");
+        jmethodID onProgress = nullptr, onPhase = nullptr;
+        if (listener) {
+            jclass cls = env->GetObjectClass(listener);
+            onProgress = env->GetMethodID(cls, "onProgress", "(II)V");
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            onPhase = env->GetMethodID(cls, "onPhase", "(I)V");
+            if (env->ExceptionCheck()) env->ExceptionClear();  // optional: keep going without phases
+        }
         auto progress = [&](int done, int total) {
             if (!onProgress) return;
             env->CallVoidMethod(listener, onProgress, done, total);
@@ -254,6 +379,49 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeRunChain(
                 first->cancel = true;
             }
         };
+        auto phase = [&](int p) {
+            if (!onPhase) return;
+            env->CallVoidMethod(listener, onPhase, p);
+            if (env->ExceptionCheck()) env->ExceptionClear();
+        };
+
+        // Repair stage: fill damage on an oriented copy of the input, which then feeds faces and
+        // the chain. The result is kept in tmpDir so a resumed job skips it.
+        std::vector<uint8_t> repaired;
+        std::unique_ptr<Image> repairedImg;
+        if (inpainter) {
+            const int W = oriented.width(), H = oriented.height();
+            const std::string rawPath = str(env, tmpDir) + "/repaired.rgba";
+            const size_t bytes = static_cast<size_t>(W) * H * 4;
+            repaired.resize(bytes);
+            struct stat st{};
+            const bool resumed = ::stat((rawPath + ".done").c_str(), &st) == 0 && readFile(rawPath, repaired);
+            if (!resumed) {
+                phase(1);
+                std::vector<uint8_t> mask(static_cast<size_t>(W) * H, 0);
+                if (scratchDetector && !reinterpret_cast<ScratchDetector*>(scratchDetector)->detect(oriented, mask)) {
+                    LOGE("scratch detection failed");
+                }
+                if (repairMask && !addMaskBitmap(env, repairMask, W, H, mask)) LOGE("unsupported mask bitmap");
+                for (int y = 0; y < H; ++y)
+                    for (int x = 0; x < W; ++x) std::memcpy(&repaired[(static_cast<size_t>(y) * W + x) * 4], oriented.at(x, y), 4);
+                size_t holes = 0;
+                for (uint8_t m : mask) holes += m;
+                LOGI("repair: %.2f%% of pixels", 100.0 * holes / mask.size());
+                const Status rs = repairImage(repaired, W, H, mask, *reinterpret_cast<NcnnInpainter*>(inpainter), progress,
+                                              &first->cancel);
+                if (rs != kOk) {
+                    AndroidBitmap_unlockPixels(env, bitmap);
+                    return rs;
+                }
+                if (writeFile(rawPath, repaired)) {
+                    if (FILE* f = std::fopen((rawPath + ".done").c_str(), "w")) std::fclose(f);
+                }
+            }
+            repairedImg = std::make_unique<Image>(repaired.data(), W, H, W * 4, 1);
+        }
+        const Image& img = repairedImg ? *repairedImg : oriented;
+        phase(0);
         std::vector<RestoredFace> faces;
         if (detector && gfpgan && faceStrength > 0.f) {
             int found = 0;

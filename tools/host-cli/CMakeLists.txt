@@ -13,6 +13,6 @@ find_package(ZLIB REQUIRED)
 set(SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../engine/native/src/main/cpp)
 
 add_executable(rescale_cli main.cpp
-    ${SRC}/core/tiler.cpp ${SRC}/core/sinks.cpp ${SRC}/core/engine.cpp ${SRC}/core/postprocess.cpp ${SRC}/core/chain.cpp ${SRC}/core/transcode.cpp ${SRC}/core/faces.cpp ${SRC}/face_restorer.cpp ${SRC}/third_party/jpge/jpge.cpp ${SRC}/ncnn_runner.cpp)
+    ${SRC}/core/tiler.cpp ${SRC}/core/sinks.cpp ${SRC}/core/engine.cpp ${SRC}/core/postprocess.cpp ${SRC}/core/chain.cpp ${SRC}/core/transcode.cpp ${SRC}/core/faces.cpp ${SRC}/core/repair.cpp ${SRC}/face_restorer.cpp ${SRC}/repairer.cpp ${SRC}/third_party/jpge/jpge.cpp ${SRC}/ncnn_runner.cpp)
 target_include_directories(rescale_cli PRIVATE ${SRC})
 target_link_libraries(rescale_cli PRIVATE ncnn ZLIB::ZLIB)

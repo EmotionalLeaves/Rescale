@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.7.0
+
+Fills in what's missing: damage repair and generative detail.
+
+- **Repair** pack (79 MB, `models-v3`): finds scratches, cracks, tears and dust spots on old photos (the detector from Microsoft's "Bringing Old Photos Back to Life", MIT) and fills them in with **MI-GAN** (Picsart, MIT), a mobile inpainting GAN. Runs on the input before everything else, so the repaired photo is what gets upscaled and face-restored
+- **Mask editor:** turning on Repair shows what the detector found (pink). Paint over anything else you want gone (a blemish, a date stamp, a stray object), or erase detections that aren't damage (railings, wires, highlights)
+- Thin damage is filled at full resolution in overlapping 512² windows; holes too big for one window are filled on a downscaled copy first, and that fill becomes context for a full-resolution pass over the hole's edge
+- On black-and-white and sepia photos, filled pixels are put back on the photo's own brightness→tone curve (the inpainter likes to add blue)
+- Auto *suggests* Repair when it sees a lot of damage, but never turns it on by itself: the detector also fires on thin real things like lattice towers
+- **Generative detail** pack (804 MB, `models-v3`): **AdcSR**, a one-step diffusion upscaler distilled from Stable Diffusion 2.1 (CVPR 2025). Real hair strands, fur, skin and fabric where the GAN models smear. One pass, no prompt, no noise. Photo mode, first 4× only; Auto picks it for small photos (≤ 0.4 MP) when installed. Its weights carry the CreativeML Open RAIL++-M licence, so the app shows the use restrictions and asks you to agree before downloading. Needs 6 GB of RAM
+- AdcSR's VAE decoder overflows FP16 on flat areas (~69,000 vs a 65,504 limit: NaN tiles on phone GPUs). The last two decoder blocks are rescaled by 1/32, exact in FP32, peak now ~2,200. Each tile's mean and contrast are matched to its input, as AdcSR does per image
+- Any tile that comes back with NaN/inf now fails the job (and switches the app to CPU) instead of writing black squares
+- Big models load without ncnn's winograd/sgemm weight transforms, which would multiply their memory 2–4×
+- A downloaded pack is verified and unpacked in place, without a second temporary copy
+- Progress shows "Repairing damage" while the Repair stage runs
+
 ## v0.6.0
 
 Face restoration and resumable jobs.

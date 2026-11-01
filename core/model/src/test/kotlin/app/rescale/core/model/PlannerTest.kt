@@ -100,6 +100,34 @@ class PlannerTest {
         assertEquals(2, anime.downsample)
     }
 
+    @Test fun generativeReplacesOnlyTheFirstPhotoPass() {
+        val s = JobSettings(Mode.PHOTO, 8, Tuning.defaultFor(Mode.PHOTO), listOf(Stage.DENOISE), generative = true, pro = true)
+        val all = setOf(Packs.GENERATIVE, Packs.DENOISE, Packs.PHOTO_PRO)
+        val p = Planner.plan(s, all)
+        assertEquals(listOf(PackModels.ADCSR, PackModels.X4PLUS), p.passes.map { it.model })
+        assertEquals(8, p.outputScale)
+        // 2× = generative 4× then area-downsample.
+        val two = Planner.plan(s.copy(scale = 2), all)
+        assertEquals(PackModels.ADCSR, two.model)
+        assertEquals(2, two.downsample)
+        // Without the pack, or in Anime mode, nothing changes.
+        assertEquals(PackModels.DENOISE_50, Planner.plan(s.copy(scale = 4), all - Packs.GENERATIVE).model)
+        assertEquals(BundledModels.ANIME_X4, Planner.plan(s.copy(mode = Mode.ANIME, scale = 4, pro = false), all).model)
+    }
+
+    @Test fun repairIsNotAPass() {
+        val s = JobSettings(Mode.PHOTO, 4, Tuning.defaultFor(Mode.PHOTO), listOf(Stage.REPAIR))
+        assertEquals(listOf(BundledModels.GENERAL_X4V3), Planner.plan(s, setOf(Packs.REPAIR)).passes.map { it.model })
+    }
+
+    @Test fun generativeModelSpec() {
+        val m = PackModels.ADCSR
+        assertEquals(0, (m.tile + 2 * m.pad) % m.alignment)  // full tiles need no internal padding
+        assertTrue(m.signedRange && m.statMatch && m.lowMemory)
+        assertEquals(Packs.GENERATIVE, m.packId)
+        assertTrue(Packs.all.first { it.id == Packs.GENERATIVE }.terms!!.contains("Open RAIL++-M"))
+    }
+
     @Test fun estimate() {
         val e = OutputEstimate.of(1000, 500, 4)
         assertEquals(4000L, e.width)

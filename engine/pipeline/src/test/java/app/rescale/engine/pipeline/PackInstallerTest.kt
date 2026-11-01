@@ -83,4 +83,20 @@ class PackInstallerTest {
         assertTrue(File(root, "demo/m.param").exists())
         assertFalse(File(root.parentFile.parentFile, "evil").exists())
     }
+
+    @Test fun installsDownloadedFileInPlace() {
+        val z = zip("m.param" to param, "m.bin" to bin)
+        val (inst, root) = setup(z, mapOf("m.param" to sha(param), "m.bin" to sha(bin)))
+        val part = File(tmp.root, "demo.zip.part").apply { writeBytes(z) }
+        assertEquals("demo", inst.installFile(part, expectedId = "demo"))
+        assertTrue(File(root, "demo/m.bin").readBytes().contentEquals(bin))
+        assertTrue(part.exists()) // the caller owns (and deletes) the download
+        part.writeBytes(z.copyOf(z.size - 1))
+        try {
+            inst.installFile(part)
+            fail("truncated download accepted")
+        } catch (e: PackIntegrityException) {
+            // expected
+        }
+    }
 }

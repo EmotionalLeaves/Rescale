@@ -31,7 +31,9 @@ add_library(rescale SHARED
     core/chain.cpp
     core/transcode.cpp
     core/faces.cpp
+    core/repair.cpp
     face_restorer.cpp
+    repairer.cpp
     third_party/jpge/jpge.cpp
     ncnn_runner.cpp
     jni_bridge.cpp)

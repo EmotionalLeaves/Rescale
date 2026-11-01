@@ -42,7 +42,8 @@ import java.util.concurrent.atomic.AtomicReference
 /** UI-facing view of the single active/last job. */
 sealed interface JobState {
     data object Idle : JobState
-    data class Running(val done: Int, val total: Int, val etaSeconds: Long?) : JobState
+    /** [repairing]: the Repair stage is filling damage (tile counts are its windows). */
+    data class Running(val done: Int, val total: Int, val etaSeconds: Long?, val repairing: Boolean = false) : JobState
     data class Done(
         val output: File,
         val preview: File,
@@ -94,6 +95,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                     outDir,
                     onStarted = { canceller.set(it) },
                     onProgress = { d, t -> reportProgress(d, t) },
+                    onPhase = { p -> phase = p; eta.start() },
                 )
             }
             canceller.set(null)
@@ -121,10 +123,11 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
 
     private var throttle: Throttle? = null
     private val eta = EtaEstimator()
+    @Volatile private var phase = Upscaler.PHASE_UPSCALE
 
     private fun reportProgress(done: Int, total: Int) {
         val eta = eta.update(done, total)
-        setProgressAsync(workDataOf(KEY_DONE to done, KEY_TOTAL to total, KEY_ETA to (eta ?: -1L)))
+        setProgressAsync(workDataOf(KEY_DONE to done, KEY_TOTAL to total, KEY_ETA to (eta ?: -1L), KEY_PHASE to phase))
         val now = SystemClock.elapsedRealtime()
         if (now - lastNotify > 700 || done == total) {
             lastNotify = now
@@ -146,7 +149,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
     private fun buildNotification(done: Int, total: Int, eta: Long?) =
         NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_crop)
-            .setContentTitle("Upscaling")
+            .setContentTitle(if (phase == Upscaler.PHASE_REPAIR) "Repairing damage" else "Upscaling")
             .setContentText(
                 if (total == 0) "Preparing…"
                 else (if (throttle?.cooling == true) "Cooling down · " else "") +
@@ -189,6 +192,10 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         const val KEY_PIPELINE = "pipeline"
         const val KEY_FINISH_BICUBIC = "finishBicubic"
         const val KEY_FACE_STRENGTH = "faceStrength"
+        const val KEY_GENERATIVE = "generative"
+        const val KEY_AUTO_DAMAGE = "autoDamage"
+        const val KEY_REPAIR_MASK = "repairMask"
+        const val KEY_PHASE = "phase"
 
         private fun settingsFrom(d: androidx.work.Data): JobSettings {
             val mode = Mode.valueOf(d.getString(KEY_MODE) ?: Mode.PHOTO.name)
@@ -206,6 +213,9 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 strongDenoise = d.getBoolean(KEY_STRONG_DENOISE, false),
                 finishWithBicubic = d.getBoolean(KEY_FINISH_BICUBIC, false),
                 faceStrength = d.getFloat(KEY_FACE_STRENGTH, 0.6f).coerceIn(0f, 1f),
+                generative = d.getBoolean(KEY_GENERATIVE, false),
+                autoDamage = d.getBoolean(KEY_AUTO_DAMAGE, true),
+                repairMask = d.getString(KEY_REPAIR_MASK),
             )
         }
         const val KEY_OUTPUT = "output"
@@ -237,6 +247,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                         KEY_LUMA_ONLY to s.tuning.lumaOnly, KEY_STAGES to s.stages.map { it.name }.toTypedArray(),
                         KEY_PRO to s.pro, KEY_JPEG_QUALITY to s.jpegQuality, KEY_STRONG_DENOISE to s.strongDenoise,
                         KEY_FINISH_BICUBIC to s.finishWithBicubic, KEY_FACE_STRENGTH to s.faceStrength,
+                        KEY_GENERATIVE to s.generative, KEY_AUTO_DAMAGE to s.autoDamage, KEY_REPAIR_MASK to s.repairMask,
                     ),
                 )
                 .setConstraints(Constraints.Builder().setRequiresCharging(onlyWhileCharging).build())
@@ -262,7 +273,10 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                     WorkInfo.State.RUNNING -> {
                         val p = info.progress
                         val eta = p.getLong(KEY_ETA, -1L)
-                        JobState.Running(p.getInt(KEY_DONE, 0), p.getInt(KEY_TOTAL, 0), eta.takeIf { it >= 0 })
+                        JobState.Running(
+                            p.getInt(KEY_DONE, 0), p.getInt(KEY_TOTAL, 0), eta.takeIf { it >= 0 },
+                            repairing = p.getInt(KEY_PHASE, Upscaler.PHASE_UPSCALE) == Upscaler.PHASE_REPAIR,
+                        )
                     }
                     WorkInfo.State.SUCCEEDED -> {
                         val d = info.outputData

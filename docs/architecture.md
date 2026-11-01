@@ -7,6 +7,7 @@
 3. **Plan.** `Planner.plan(mode, scale)` picks the model and an optional downsample factor (Photo 2× = 4× model, then 2:1 area downsample, which is what Real-ESRGAN's `--outscale` does).
 4. **Backend.** `BackendSelector` loads the model on Vulkan when available. The first time per model and app version it runs a fixed probe tile on GPU and CPU and only trusts the GPU if they match. A model error on GPU flips the app to CPU.
 5. **Decode.** The full input is decoded once as non-premultiplied RGBA. The EXIF rotation is *not* applied to pixels: the engine reads through an orientation-aware view instead.
+5b. **Repair** (optional, `core/repair.cpp` + `repairer.cpp`): the damage detector runs on the oriented input (short side 512 and 256, max of the two logit maps, threshold 0.4, dilated), the user's painted mask adds (red) or keeps (green) areas, and MI-GAN fills the holes in 512² windows (stride 384; fills within 64 px of a window edge are redone by the next window). Holes more than 40 px from known pixels are first filled on a downscaled copy, recursively. On B&W/toned photos fills are mapped back onto the photo's brightness→tone curve. The repaired copy (RGBA, input size) is checkpointed to the job's tmp dir and feeds face detection and the chain.
 6. **Engine** (C++, `engine/native/src/main/cpp/core`):
    - `planAxis` lays tiles out so they overlap by ≥ `overlap` px and the last tile ends exactly at the border.
    - Each tile is reflect-padded by `pad` px, run through the model, and cropped.
@@ -20,7 +21,7 @@
 
 ## Testing
 
-- `engine/native/src/test/cpp/engine_test.cpp` (host, ASan + UBSan): tile planning, reflect indexing, seam-free stitching (exact on flat colour, ≤ 1/255 on gradients), feather smoothness with deliberately inconsistent tiles, orientation mapping, alpha and downsample, cancellation, and a PNG round-trip with CRC and Paeth decoding.
+- `engine/native/src/test/cpp/engine_test.cpp` (host, ASan + UBSan): repair (known pixels untouched byte-for-byte, holes never shown to the network, every hole filled, coarse-to-fine on big holes, all-hole and empty masks, cancel, tone matching), per-tile stat matching, tile planning, reflect indexing, seam-free stitching (exact on flat colour, ≤ 1/255 on gradients), feather smoothness with deliberately inconsistent tiles, orientation mapping, alpha and downsample, cancellation, and a PNG round-trip with CRC and Paeth decoding.
 - `core/model` JVM tests: planner and estimates.
 - `tools/host-cli/compare_tiling.py`: the real model through the real engine vs untiled PyTorch (≈ 60 dB).
 

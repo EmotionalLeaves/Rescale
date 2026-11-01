@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
+import app.rescale.core.model.BundledModels
 import app.rescale.core.model.JobSettings
 import app.rescale.core.model.Limits
 import app.rescale.core.model.PackModels
@@ -14,6 +15,8 @@ import app.rescale.engine.nativebridge.NativeEngine
 import app.rescale.engine.nativebridge.NativeStatus
 import app.rescale.engine.nativebridge.PostOptions
 import app.rescale.engine.nativebridge.ProgressListener
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import java.io.File
 
 data class UpscaleRequest(val input: Uri, val settings: JobSettings)
@@ -52,6 +55,7 @@ class Upscaler(private val context: Context, appVersion: Long) {
         req: UpscaleRequest,
         outDir: File,
         onStarted: (Cancellable) -> Unit,
+        onPhase: (phase: Int) -> Unit = {},
         onProgress: (done: Int, total: Int) -> Unit,
     ): UpscaleOutcome {
         val info = try {
@@ -76,11 +80,20 @@ class Upscaler(private val context: Context, appVersion: Long) {
             h = h * p.model.scale / p.downsample
             intermediates += w * h * 4
         }
+        if (Stage.REPAIR in req.settings.stages) intermediates += info.width.toLong() * info.height * 4
         val needBytes = outW * outH * 3 / 2 + intermediates + (64L shl 20)
         if (outDir.apply { mkdirs() }.usableSpace < needBytes) {
             return UpscaleOutcome.Failed("Not enough free storage (need about ${needBytes shr 20} MB)")
         }
 
+        // Big models and the repair nets follow the GPU verdict of the self-tested models: make sure
+        // there is one (the built-in model's test is quick) before the first such job.
+        if ((plan.passes.any { it.model.lowMemory } || Stage.REPAIR in req.settings.stages) && !backends.hasVerdict()) {
+            runCatching {
+                val (p, b) = models.resolve(BundledModels.GENERAL_X4V3)
+                backends.open(BundledModels.GENERAL_X4V3, p, b).close()
+            }
+        }
         val sessions = mutableListOf<NativeEngine.Session>()
         val passes = try {
             plan.passes.map { p ->
@@ -125,11 +138,44 @@ class Upscaler(private val context: Context, appVersion: Long) {
             }
         }
 
+        // Repair stage: damage detector (optional) + MI-GAN, run on the input before everything else.
+        var repair: NativeEngine.Repair? = null
+        val repairOn = Stage.REPAIR in req.settings.stages && Packs.REPAIR in packs.installed()
+        if (repairOn) {
+            var det: NativeEngine.ScratchDetector? = null
+            try {
+                val gpu = backends.gpuTrusted()
+                val threads = BackendSelector.cpuThreads()
+                if (req.settings.autoDamage) {
+                    val (dp, db) = models.resolve(PackModels.SCRATCH)
+                    det = NativeEngine.openScratchDetector(dp.path, db.path, gpu, threads)
+                        ?: error("Couldn't load the damage detector")
+                }
+                val (ip, ib) = models.resolve(PackModels.MIGAN)
+                val inp = NativeEngine.openInpainter(ip.path, ib.path, gpu, threads) ?: error("Couldn't load the inpainter")
+                val mask = req.settings.repairMask?.let { path ->
+                    BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 })
+                }
+                repair = NativeEngine.Repair(det, inp, mask)
+            } catch (e: Exception) {
+                det?.close()
+                detector?.close()
+                sessions.forEach { it.close() }
+                return UpscaleOutcome.Failed(e.message ?: "Couldn't load repair models")
+            }
+        }
+        fun closeRepair() {
+            repair?.detector?.close()
+            repair?.inpainter?.close()
+            repair?.mask?.recycle()
+        }
+
         val bitmap = try {
             ImageLoader.decodeForEngine(context, req.input)
         } catch (e: Throwable) {
             sessions.forEach { it.close() }
             detector?.close()
+            closeRepair()
             return UpscaleOutcome.Failed(if (e is OutOfMemoryError) "Not enough memory to open this image" else e.message ?: "Decode failed")
         }
 
@@ -155,12 +201,17 @@ class Upscaler(private val context: Context, appVersion: Long) {
                 outPath = output.path,
                 previewPath = preview.path,
                 previewMax = PREVIEW_MAX,
-                listener = ProgressListener { d, t -> onProgress(d, t) },
+                listener = object : ProgressListener {
+                    override fun onProgress(done: Int, total: Int) = onProgress(done, total)
+                    override fun onPhase(phase: Int) = onPhase(phase)
+                },
                 faces = faces,
+                repair = repair,
             )
         } finally {
             sessions.forEach { it.close() }
             detector?.close()
+            closeRepair()
             bitmap.recycle()
             tmp.deleteRecursively()
         }
@@ -168,7 +219,8 @@ class Upscaler(private val context: Context, appVersion: Long) {
         return when (status) {
             NativeStatus.OK -> UpscaleOutcome.Success(
                 output, preview, outW.toInt(), outH.toInt(), backend, SystemClock.elapsedRealtime() - started,
-                (plan.passes.map { it.model.displayName } + listOfNotNull(faces?.let { "GFPGAN faces" })).joinToString(" → "),
+                (listOfNotNull(repair?.let { "MI-GAN repair" }) + plan.passes.map { it.model.displayName } +
+                    listOfNotNull(faces?.let { "GFPGAN faces" })).joinToString(" → "),
             )
             NativeStatus.CANCELLED -> {
                 output.delete(); preview.delete()
@@ -192,6 +244,9 @@ class Upscaler(private val context: Context, appVersion: Long) {
     }
 
     companion object {
+        /** Values passed to onPhase (same as the native bridge's Phase). */
+        const val PHASE_UPSCALE = 0
+        const val PHASE_REPAIR = 1
         const val CPU_TILE = 128
 
         /** Faces bigger than this (input px) are left alone: they already have real detail. */
