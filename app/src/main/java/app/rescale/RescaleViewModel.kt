@@ -114,7 +114,11 @@ data class EditorState(
         )
     val generativeAvailable: Boolean get() = generativeCapable && mode == Mode.PHOTO
     val proAvailable: Boolean
-        get() = (if (mode == Mode.PHOTO) Packs.PHOTO_PRO else Packs.ANIME_PRO) in installedPacks
+        get() = when (mode) {
+            Mode.PHOTO -> Packs.PHOTO_PRO in installedPacks
+            Mode.ANIME -> Packs.ANIME_PRO in installedPacks
+            Mode.TEXT -> false
+        }
     val tooLarge: Boolean get() = input?.let { it.info.width.toLong() * it.info.height > Limits.MAX_INPUT_PIXELS } ?: false
 }
 

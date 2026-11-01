@@ -371,6 +371,9 @@ private fun RestorationControls(
         } else if (state.mode == Mode.PHOTO && Packs.GENERATIVE !in state.installedPacks) {
             TextButton(onClick = onOpenModels) { Text("Get Generative detail (diffusion model)") }
         }
+        if (state.mode == Mode.TEXT && Packs.TEXT !in state.installedPacks) {
+            TextButton(onClick = onOpenModels) { Text("Get the Text pack for sharper letters") }
+        }
         if (state.proAvailable && !(state.generative && state.generativeAvailable)) {
             ToggleRow(
                 "Pro model",

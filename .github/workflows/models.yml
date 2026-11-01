@@ -14,9 +14,9 @@ permissions:
   contents: write
 
 env:
-  PACKS_VERSION: '3'
+  PACKS_VERSION: '4'
   # Packs built into this release; others keep their entries (and URLs) from earlier releases.
-  PACKS_ONLY: 'repair,generative'
+  PACKS_ONLY: 'text'
 
 concurrency:
   group: models
@@ -99,6 +99,7 @@ jobs:
             | rescale-pack-photo-pro.zip | Pro photo upscaler (Real-ESRGAN x4plus, BSD-3-Clause) |
             | rescale-pack-anime-pro.zip | Pro anime upscaler (Real-ESRGAN x4plus anime 6B, BSD-3-Clause) |
             | rescale-pack-faces.zip | Faces stage (GFPGAN v1.4, Apache-2.0 + RetinaFace, MIT) |
+            | rescale-pack-text.zip | Text mode (RealESRNet x4plus, BSD-3-Clause) |
             | rescale-pack-repair.zip | Repair stage (MI-GAN inpainting, MIT + old-photo damage detector, MIT) |
             | rescale-pack-generative.zip | Generative upscaler (AdcSR: code Apache-2.0, weights CreativeML Open RAIL++-M with use restrictions) |
 

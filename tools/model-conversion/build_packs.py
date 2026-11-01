@@ -27,6 +27,7 @@ SOURCES = {
     "fbcnn_color.pth": "https://github.com/jiaxi-jiang/FBCNN/releases/download/v1.0/fbcnn_color.pth",
     "GFPGANv1.4.pth": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/GFPGANv1.4.pth",
     "retinaface_mnet.pth": "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_mobilenet0.25_Final.pth",
+    "RealESRNet_x4plus.pth": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.1/RealESRNet_x4plus.pth",
 }
 # Big sources, fetched only for the packs that need them.
 SOURCES_REPAIR = {
@@ -158,6 +159,9 @@ def main():
         run("export_gfpgan.py", "--repo", w("GFPGAN"), "--weights", w("GFPGANv1.4.pth"), "--out", m("gfpgan-v1.4"))
         run("export_retinaface.py", "--repo", w("facexlib"), "--weights", w("retinaface_mnet.pth"),
             "--out", m("retinaface-mnet"))
+    if want("text"):
+        run("export_rrdb.py", "--weights", w("RealESRNet_x4plus.pth"),
+            "--param", os.path.join(resr, "models", "realesrgan-x4plus.param"), "--out", m("realesrnet-x4plus"))
     if want("repair"):
         run("export_repair.py", "--repo", w("bopbtl"), "--checkpoints", w("global_checkpoints.zip"),
             "--migan", w("migan_traced.pt"), "--out", models)
@@ -173,6 +177,7 @@ def main():
         "anime-pro": (["realesrgan-x4plus-anime"], BSD_RESR),
         "faces": (["gfpgan-v1.4", "retinaface-mnet"], FACES_LIC),
         "repair": (["scratch-detect", "migan-512"], REPAIR_LIC),
+        "text": (["realesrnet-x4plus"], BSD_RESR),
         "generative": (["adcsr-x4"], generative_license() if want("generative") else ""),
     }
     manifest = {"version": 1, "packs": []}

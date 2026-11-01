@@ -115,6 +115,15 @@ class PlannerTest {
         assertEquals(BundledModels.ANIME_X4, Planner.plan(s.copy(mode = Mode.ANIME, scale = 4, pro = false), all).model)
     }
 
+    @Test fun textModeUsesRealEsrNetWhenInstalled() {
+        val s = JobSettings(Mode.TEXT, 2, Tuning.defaultFor(Mode.TEXT))
+        val p = Planner.plan(s, setOf(Packs.TEXT))
+        assertEquals(PackModels.REALESRNET, p.model)
+        assertEquals(2, p.downsample)
+        assertEquals(BundledModels.GENERAL_X4V3, Planner.plan(s, emptySet()).model)
+        for (scale in Planner.supportedScales) assertEquals(scale, Planner.plan(s.copy(scale = scale), setOf(Packs.TEXT)).outputScale)
+    }
+
     @Test fun repairIsNotAPass() {
         val s = JobSettings(Mode.PHOTO, 4, Tuning.defaultFor(Mode.PHOTO), listOf(Stage.REPAIR))
         assertEquals(listOf(BundledModels.GENERAL_X4V3), Planner.plan(s, setOf(Packs.REPAIR)).passes.map { it.model })

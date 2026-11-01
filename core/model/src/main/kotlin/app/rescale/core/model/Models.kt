@@ -5,6 +5,8 @@ enum class Mode(val label: String, val defaultDetail: Float) {
     // Photos look more natural with a little of the faithful bicubic blended back in.
     PHOTO("Photo", 0.8f),
     ANIME("Anime / Art", 1.0f),
+    // Text, screenshots, documents: faithful edges, no invented texture.
+    TEXT("Text", 1.0f),
 }
 
 /** User-facing artifact controls (see PostOptions in the native bridge). */
@@ -127,7 +129,17 @@ object PackModels {
         "https://github.com/Picsart-AI-Research/MI-GAN", packId = Packs.REPAIR,
     )
 
-    val all = listOf(FBCNN, DENOISE_50, DENOISE_100, X4PLUS, X4PLUS_ANIME, GFPGAN, RETINAFACE, ADCSR, SCRATCH, MIGAN)
+    /**
+     * RealESRNet x4plus: Real-ESRGAN's generator before GAN training (pixel loss only). Trained on
+     * the same real-world degradations, but sharpens edges without inventing texture: best of
+     * our models on text (+0.5 dB over x4plus, +1.4 dB over general-x4v3 on a JPEG'd screenshot).
+     */
+    val REALESRNET = ModelSpec(
+        "realesrnet-x4plus", "RealESRNet x4plus (text)", 4, "data", "output", "BSD-3-Clause", RESR,
+        packId = Packs.TEXT, tile = 128, pad = 12,
+    )
+
+    val all = listOf(FBCNN, DENOISE_50, DENOISE_100, X4PLUS, X4PLUS_ANIME, GFPGAN, RETINAFACE, ADCSR, SCRATCH, MIGAN, REALESRNET)
 }
 
 object Packs {
@@ -138,6 +150,7 @@ object Packs {
     const val FACES = "faces"
     const val REPAIR = "repair"
     const val GENERATIVE = "generative"
+    const val TEXT = "text"
 
     data class Info(
         val id: String,
@@ -156,6 +169,12 @@ object Packs {
         Info(PHOTO_PRO, "Photo Pro", "Real-ESRGAN x4plus: stronger texture than the built-in model, but about 15–20× slower.", "Pro quality (Photo)"),
         Info(FACES, "Face restore", "GFPGAN restores small or blurry faces (RetinaFace finds them). Restored faces are partly invented.", "Faces stage"),
         Info(ANIME_PRO, "Anime Pro", "Real-ESRGAN x4plus anime 6B: crisper line art than the built-in model, slower.", "Pro quality (Anime)"),
+        Info(
+            TEXT, "Text",
+            "RealESRNet: sharp, clean letters for screenshots, documents, signs and scans, without the " +
+                "made-up texture GAN models add around text. Used by the Text image type.",
+            "Text mode",
+        ),
         Info(
             REPAIR, "Repair",
             "Finds scratches, cracks, tears and spots on old photos and fills them in (MI-GAN). You can also paint over anything you want removed.",
@@ -295,6 +314,7 @@ object Planner {
             s.pro && Packs.PHOTO_PRO in packs -> PackModels.X4PLUS
             else -> BundledModels.GENERAL_X4V3
         }
+        Mode.TEXT -> if (Packs.TEXT in packs) PackModels.REALESRNET else BundledModels.GENERAL_X4V3
         Mode.ANIME -> when {
             s.pro && Packs.ANIME_PRO in packs -> PackModels.X4PLUS_ANIME
             factor == 2 -> BundledModels.ANIME_X2

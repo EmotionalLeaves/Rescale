@@ -10,7 +10,7 @@ Model weights are data, but their licenses still apply. Every model shipped or o
 | `realesr-animevideov3-x2.{param,bin}` | `realesrgan-ncnn-vulkan-20220424` release, Real-ESRGAN v0.2.5.0 | BSD-3-Clause, © 2021 Xintao Wang | Used as published |
 | `realesr-animevideov3-x4.{param,bin}` | same | BSD-3-Clause, © 2021 Xintao Wang | Used as published |
 
-## Downloadable packs (releases `models-v1`, `models-v2`, `models-v3`)
+## Downloadable packs (releases `models-v1`, `models-v2`, `models-v3`, `models-v4`)
 
 Built by `.github/workflows/models.yml` with `tools/model-conversion/build_packs.py`. Each zip contains a `LICENSE.txt`.
 
@@ -20,6 +20,7 @@ Built by `.github/workflows/models.yml` with `tools/model-conversion/build_packs
 | `denoise` | `realesr-general-dn50`, `realesr-general-dn100` | `realesr-general-x4v3` interpolated with `realesr-general-wdn-x4v3` at 50% and 100% | BSD-3-Clause |
 | `photo-pro` | `realesrgan-x4plus` | `realesrgan-ncnn-vulkan-20220424` | BSD-3-Clause |
 | `anime-pro` | `realesrgan-x4plus-anime` | `realesrgan-ncnn-vulkan-20220424` | BSD-3-Clause |
+| `text` (v4) | `realesrnet-x4plus` | [`RealESRNet_x4plus.pth`](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.1), Real-ESRGAN v0.1.1 (the non-GAN generator), written into the published `realesrgan-x4plus.param` layout (`export_rrdb.py`) | BSD-3-Clause |
 | `repair` (v3) | `scratch-detect`, `migan-512` | Damage detector: the scratch-detection UNet from [Bringing Old Photos Back to Life](https://github.com/microsoft/Bringing-Old-Photos-Back-to-Life) (`checkpoints/detection/FT_Epoch_latest.pt` in `global_checkpoints.zip`); inpainter: [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) 512 Places2, from the TorchScript trace published with IOPaint ([Sanster/models](https://github.com/Sanster/models/releases/tag/migan)). Both converted to ncnn FP16 (`export_repair.py`) | MIT / MIT |
 | `generative` (v3) | `adcsr-x4` | [AdcSR](https://github.com/Guaishou74851/AdcSR) `net_params_200.pkl` + `halfDecoder.ckpt` ([Hugging Face](https://huggingface.co/Guaishou74851/AdcSR)), converted to one ncnn FP16 network; the last two VAE decoder blocks rescaled by 1/32 for FP16 range (`export_adcsr.py`) | Code Apache-2.0; **weights CreativeML Open RAIL++-M** (see below) |
 | `faces` (v2) | `gfpgan-v1.4`, `retinaface-mnet` | [GFPGAN](https://github.com/TencentARC/GFPGAN) `GFPGANv1.4.pth` (clean architecture: no StyleGAN2 CUDA ops), modulated convs rewritten into an equivalent fp16-safe form (`export_gfpgan.py`); [facexlib](https://github.com/xinntao/facexlib) RetinaFace MobileNet-0.25 | Apache-2.0 / MIT |
