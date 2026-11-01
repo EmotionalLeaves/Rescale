@@ -76,6 +76,16 @@
         "adcsr-x4.bin": "44353e1ad3d6e2fb488103b39866fbb9a02ff8a368f9851814c9d7dd9d4fc172",
         "adcsr-x4.param": "d2a80e9e823c2ac0c658eb18ec4d65b110a61c3f93e084cc17244fd3464319d3"
       }
+    },
+    {
+      "id": "text",
+      "url": "https://github.com/EmotionalLeaves/Rescale/releases/download/models-v4/rescale-pack-text.zip",
+      "size": 31002326,
+      "sha256": "920853dd437f23660b8c60626070e0e4fd5e463bba46d6a050c7a3612cff9d7e",
+      "files": {
+        "realesrnet-x4plus.bin": "98d7e2a27aaabc31e6bd6fc82ce122c77c5b4e1f065c998df8d881a6e8e4b369",
+        "realesrnet-x4plus.param": "35330ececcea33b6c397a72548e788d5d53becee4734c50b7fada36e89f10a86"
+      }
     }
   ]
 }
