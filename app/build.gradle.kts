@@ -70,8 +70,10 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "armeabi-v7a", "x86_64")
-            isUniversalApk = true
+            val abis = (findProperty("abis") as String?)?.split(",")?.map { it.trim() }
+                ?: listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            include(*abis.toTypedArray())
+            isUniversalApk = abis.size > 1
         }
     }
 

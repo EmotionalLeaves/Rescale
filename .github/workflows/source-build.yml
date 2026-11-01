@@ -1,0 +1,31 @@
+name: From-source build (F-Droid path)
+
+# Builds the app with ncnn compiled from source (no prebuilt binaries), the way F-Droid
+# will. Runs weekly and whenever the native build changes, so that path never rots.
+on:
+  schedule:
+    - cron: '17 9 * * 1'
+  push:
+    branches: [main]
+    paths: ['engine/native/**', 'scripts/fetch-ncnn-source.sh', '.github/workflows/source-build.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools ndk;30.0.16248370 cmake;3.31.6'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Fetch ncnn source
+        run: scripts/fetch-ncnn-source.sh
+      - name: Build arm64 release from source
+        run: ./gradlew --no-daemon --stacktrace -Pabis=arm64-v8a -PncnnSource=engine/native/third_party/ncnn-src :app:assembleRelease
+      - name: No prebuilt ncnn was used
+        run: test ! -e engine/native/third_party/ncnn-20261020-android-vulkan

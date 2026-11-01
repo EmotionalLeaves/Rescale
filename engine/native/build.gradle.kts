@@ -8,10 +8,18 @@ plugins {
 val ncnnVersion = "20261020"
 val ncnnDir = layout.projectDirectory.dir("third_party/ncnn-$ncnnVersion-android-vulkan")
 
+// -PncnnSource=<path to an ncnn checkout with submodules> builds ncnn from source instead
+// (scripts/fetch-ncnn-source.sh). F-Droid builds use this; normal builds use the prebuilt.
+val ncnnSource: String? = (findProperty("ncnnSource") as String?)?.let { rootProject.file(it).absolutePath }
+
+// -Pabis=arm64-v8a,x86_64 limits the ABIs (per-ABI F-Droid builds, faster local builds).
+val abiList: List<String> = (findProperty("abis") as String?)?.split(",")?.map { it.trim() }
+    ?: listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+
 val fetchNcnn by tasks.registering {
     description = "Downloads the ncnn Android Vulkan prebuilt into third_party/"
     outputs.dir(ncnnDir)
-    onlyIf { !ncnnDir.asFile.resolve("arm64-v8a/lib/libncnn.a").exists() }
+    onlyIf { ncnnSource == null && !ncnnDir.asFile.resolve("arm64-v8a/lib/libncnn.a").exists() }
     doLast {
         val zip = layout.buildDirectory.file("ncnn.zip").get().asFile
         zip.parentFile.mkdirs()
@@ -36,12 +44,12 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += listOf(
-                    "-DNCNN_ROOT=${ncnnDir.asFile.absolutePath}",
+                    if (ncnnSource != null) "-DNCNN_SOURCE_DIR=$ncnnSource" else "-DNCNN_ROOT=${ncnnDir.asFile.absolutePath}",
                     "-DANDROID_STL=c++_static",
                 )
             }
         }
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+        ndk { abiFilters += abiList }
         consumerProguardFiles("consumer-rules.pro")
     }
 

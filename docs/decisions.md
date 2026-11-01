@@ -23,4 +23,4 @@ The outline's open decisions, as resolved for the MVP. Each one is easy to revis
 - **No Hilt/Room/DataStore yet.** With one screen flow and one job, a ViewModel, WorkManager's own database and SharedPreferences are enough. These come in when batch and history land.
 - **Fewer modules.** `feature:*` and `core:ui/data` are folded into `:app` until there is enough UI to split.
 - **Streaming PNG encoder instead of libpng.** About 150 lines on top of zlib (which the NDK ships), with no extra native dependency.
-- **ncnn is a pinned prebuilt** downloaded at build time. F-Droid will need it built from source (`third_party` submodule + CMake), tracked for v1.0.
+- **ncnn is a pinned prebuilt** downloaded at build time for speed. `-PncnnSource=` builds it from source instead (`scripts/fetch-ncnn-source.sh`), which is what F-Droid will use. A weekly workflow keeps that path green, and the draft metadata is in `docs/fdroid/`.

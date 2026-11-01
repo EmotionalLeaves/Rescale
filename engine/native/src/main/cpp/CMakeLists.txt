@@ -4,12 +4,24 @@ project(rescale_native CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ncnn prebuilt (Vulkan) is fetched by the :engine:native Gradle task `fetchNcnn`.
-if(NOT NCNN_ROOT)
-    message(FATAL_ERROR "NCNN_ROOT not set; run ./gradlew :engine:native:fetchNcnn")
+# ncnn comes either from source (NCNN_SOURCE_DIR: reproducible, what F-Droid uses) or from
+# the pinned prebuilt release fetched by the Gradle task `fetchNcnn` (NCNN_ROOT: fast).
+if(NCNN_SOURCE_DIR)
+    set(NCNN_VULKAN ON CACHE BOOL "" FORCE)
+    set(NCNN_SHARED_LIB OFF CACHE BOOL "" FORCE)
+    set(NCNN_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(NCNN_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(NCNN_BUILD_BENCHMARK OFF CACHE BOOL "" FORCE)
+    set(NCNN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(NCNN_DISABLE_RTTI OFF CACHE BOOL "" FORCE)
+    set(NCNN_DISABLE_EXCEPTION OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${NCNN_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/ncnn EXCLUDE_FROM_ALL)
+elseif(NCNN_ROOT)
+    set(ncnn_DIR ${NCNN_ROOT}/${ANDROID_ABI}/lib/cmake/ncnn)
+    find_package(ncnn REQUIRED)
+else()
+    message(FATAL_ERROR "Set NCNN_ROOT (./gradlew :engine:native:fetchNcnn) or NCNN_SOURCE_DIR (-PncnnSource=...)")
 endif()
-set(ncnn_DIR ${NCNN_ROOT}/${ANDROID_ABI}/lib/cmake/ncnn)
-find_package(ncnn REQUIRED)
 
 add_library(rescale SHARED
     core/tiler.cpp

@@ -53,6 +53,13 @@ Requirements: JDK 17+, Android SDK (platform 37), NDK **30.0.16248370**, CMake 3
 ./gradlew :core:model:test     # JVM unit tests
 ```
 
+Build ncnn from source instead of the pinned prebuilt (what F-Droid does; no binaries involved):
+
+```sh
+scripts/fetch-ncnn-source.sh
+./gradlew assembleRelease -PncnnSource=engine/native/third_party/ncnn-src -Pabis=arm64-v8a
+```
+
 Native engine tests (host, no Android needed):
 
 ```sh
