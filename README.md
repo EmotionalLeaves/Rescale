@@ -53,7 +53,7 @@ Run the real engine on a PC and compare it to untiled PyTorch output: see [`tool
 
 ### Release signing
 
-Pushing a tag `vX.Y.Z` runs `release.yml`, which builds signed per-ABI and universal APKs with SHA-256 sums and publishes a GitHub Release. By default it signs with `keystore/rescale-public.jks`, a deliberately **public** key (same approach as Hypnotica) so every build installs over the last one. For a private key, add the repository secrets `KEYSTORE_B64` (base64 of a `.jks`), `STORE_PASSWORD`, `KEY_ALIAS` and `KEY_PASSWORD`. Note that switching keys means uninstalling once. Locally, a git-ignored `keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) overrides the public key.
+Adding a new `## vX.Y.Z` heading at the top of CHANGELOG.md and pushing to `main` (or pushing a tag `vX.Y.Z`) runs `release.yml`, which builds signed per-ABI and universal APKs with SHA-256 sums and publishes a GitHub Release. By default it signs with `keystore/rescale-public.jks`, a deliberately **public** key (same approach as Hypnotica) so every build installs over the last one. For a private key, add the repository secrets `KEYSTORE_B64` (base64 of a `.jks`), `STORE_PASSWORD`, `KEY_ALIAS` and `KEY_PASSWORD`. Note that switching keys means uninstalling once. Locally, a git-ignored `keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) overrides the public key.
 
 ## Architecture
 
