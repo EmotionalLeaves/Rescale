@@ -4,6 +4,7 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -12,6 +13,7 @@
 #include "core/transcode.h"
 #include "core/engine.h"
 #include "core/sinks.h"
+#include "face_restorer.h"
 #include "ncnn_runner.h"
 
 #define LOG_TAG "RescaleNative"
@@ -61,6 +63,54 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeCreate(JNIEnv* env, jobj
     h->ncnn = r.get();
     h->runner = std::move(r);
     return reinterpret_cast<jlong>(h.release());
+}
+
+JNIEXPORT jlong JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeCreateDetector(JNIEnv* env, jobject, jstring param, jstring bin,
+                                                                       jboolean gpu, jint threads) {
+    auto d = std::make_unique<FaceDetector>(gpu, threads);
+    if (!d->load(str(env, param), str(env, bin))) return 0;
+    return reinterpret_cast<jlong>(d.release());
+}
+
+JNIEXPORT void JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeDestroyDetector(JNIEnv*, jobject, jlong h) {
+    delete reinterpret_cast<FaceDetector*>(h);
+}
+
+// Returns [count, largest face size in px, smallest eye distance in px] for Auto mode.
+JNIEXPORT jfloatArray JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeDetectFaces(JNIEnv* env, jobject, jlong h, jobject bitmap,
+                                                                    jint orientation) {
+    if (!h) return nullptr;
+    AndroidBitmapInfo info;
+    void* pixels = nullptr;
+    if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
+        info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 ||
+        AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS)
+        return nullptr;
+    std::vector<Face> faces;
+    {
+        Image img(static_cast<const uint8_t*>(pixels), static_cast<int>(info.width), static_cast<int>(info.height),
+                  static_cast<int>(info.stride), orientation);
+        faces = reinterpret_cast<FaceDetector*>(h)->detect(img);
+    }
+    AndroidBitmap_unlockPixels(env, bitmap);
+    float largest = 0, minEyes = 1e9f;
+    for (const Face& f : faces) {
+        largest = std::max(largest, std::max(f.box[2] - f.box[0], f.box[3] - f.box[1]));
+        minEyes = std::min(minEyes, std::hypot(f.lm[2] - f.lm[0], f.lm[3] - f.lm[1]));
+    }
+    const float r[3] = {static_cast<float>(faces.size()), largest, faces.empty() ? 0.f : minEyes};
+    jfloatArray arr = env->NewFloatArray(3);
+    env->SetFloatArrayRegion(arr, 0, 3, r);
+    return arr;
+}
+
+JNIEXPORT void JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeSetNormalization(JNIEnv*, jobject, jlong handle, jfloat mul,
+                                                                         jfloat add) {
+    if (handle && from(handle)->ncnn) from(handle)->ncnn->setNormalization(mul, add);
 }
 
 JNIEXPORT jlong JNICALL
@@ -130,7 +180,8 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeRunChain(
     JNIEnv* env, jobject, jlongArray jHandles, jintArray jTiles, jintArray jPads, jintArray jDownsamples,
     jfloatArray jDetails, jbooleanArray jLuma, jbooleanArray jColorFix, jfloatArray jPreBlur, jobject bitmap,
     jint orientation,
-    jlong maxBandBytes, jstring tmpDir, jstring outPath, jstring previewPath, jint previewMax, jobject listener) {
+    jlong maxBandBytes, jstring tmpDir, jstring outPath, jstring previewPath, jint previewMax, jobject listener,
+    jlong detector, jlong gfpgan, jfloat faceStrength, jfloat maxFacePx) {
     const jsize n = env->GetArrayLength(jHandles);
     if (n <= 0) return kModelError;
     std::vector<jlong> handles(n);
@@ -203,8 +254,16 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeRunChain(
                 first->cancel = true;
             }
         };
+        std::vector<RestoredFace> faces;
+        if (detector && gfpgan && faceStrength > 0.f) {
+            int found = 0;
+            faces = restoreFaces(img, *reinterpret_cast<FaceDetector*>(detector), *from(gfpgan)->runner, 12, maxFacePx,
+                                 &found);
+            LOGI("faces: %d detected, %d restored", found, static_cast<int>(faces.size()));
+        }
         LOGI("chain of %d pass(es) on %dx%d", static_cast<int>(n), img.width(), img.height());
-        res = runChain(img, passes, str(env, tmpDir), maxBandBytes, makeFinal, progress, &first->cancel);
+        res = runChain(img, passes, str(env, tmpDir), maxBandBytes, makeFinal, progress, &first->cancel,
+                       std::move(faces), faceStrength);
     }
     AndroidBitmap_unlockPixels(env, bitmap);
     return res.status;

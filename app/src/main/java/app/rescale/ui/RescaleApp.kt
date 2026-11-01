@@ -178,6 +178,7 @@ fun RescaleApp(vm: RescaleViewModel) {
                     onPro = vm::setPro,
                     onOpenModels = { showModels = true },
                     onFinishBicubic = vm::setFinishWithBicubic,
+                    onFaceStrength = vm::setFaceStrength,
                     batchActive = batchItems.any {
                         it.state == app.rescale.worker.BatchItem.State.QUEUED || it.state == app.rescale.worker.BatchItem.State.RUNNING
                     },

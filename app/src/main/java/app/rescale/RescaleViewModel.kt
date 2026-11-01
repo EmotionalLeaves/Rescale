@@ -27,6 +27,7 @@ import app.rescale.engine.pipeline.ExportOptions
 import app.rescale.engine.pipeline.Exported
 import app.rescale.engine.pipeline.Exporter
 import app.rescale.engine.pipeline.Gallery
+import app.rescale.engine.pipeline.FaceProbe
 import app.rescale.engine.pipeline.ImageAnalyzer
 import app.rescale.engine.pipeline.PackStore
 import app.rescale.core.model.Packs
@@ -75,6 +76,7 @@ data class EditorState(
     val jpegQuality: Int = 50,
     val strongDenoise: Boolean = false,
     val finishWithBicubic: Boolean = false,
+    val faceStrength: Float = 0.6f,
     val installedPacks: Set<String> = emptySet(),
     val error: String? = null,
     val resultDismissed: Boolean = false,
@@ -92,7 +94,7 @@ data class EditorState(
             AutoPlanner.plan(a, Stage.entries.filter { it.packId in installedPacks }.toSet())
         }
     val settings: JobSettings
-        get() = JobSettings(mode, scale, tuning, stages, pro, jpegQuality, strongDenoise, finishWithBicubic)
+        get() = JobSettings(mode, scale, tuning, stages, pro, jpegQuality, strongDenoise, finishWithBicubic, faceStrength)
     val proAvailable: Boolean
         get() = (if (mode == Mode.PHOTO) Packs.PHOTO_PRO else Packs.ANIME_PRO) in installedPacks
     val tooLarge: Boolean get() = input?.let { it.info.width.toLong() * it.info.height > Limits.MAX_INPUT_PIXELS } ?: false
@@ -198,6 +200,7 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     fun clearBatch() = BatchWorker.clearFinished(ctx)
 
     fun setPro(v: Boolean) = _state.update { it.copy(pro = v, auto = false) }
+    fun setFaceStrength(v: Float) = _state.update { it.copy(faceStrength = v.coerceIn(0f, 1f)) }
     fun setFinishWithBicubic(v: Boolean) = _state.update { it.copy(finishWithBicubic = v) }
 
     init {
@@ -218,7 +221,8 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
                         ?: error("Can't open this image")
                     val local = Uri.fromFile(copy)
                     val info = ImageLoader.info(ctx, local)
-                    val analysis = ImageAnalyzer.analyze(ctx, local, info)
+                    val faces = FaceProbe.smallFaces(ctx, local, info, packStore)
+                    val analysis = ImageAnalyzer.analyze(ctx, local, info)?.copy(smallFaces = faces)
                     val name = runCatching {
                         ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
                             ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }

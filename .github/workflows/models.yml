@@ -14,7 +14,9 @@ permissions:
   contents: write
 
 env:
-  PACKS_VERSION: '1'
+  PACKS_VERSION: '2'
+  # Packs built into this release; others keep their entries (and URLs) from earlier releases.
+  PACKS_ONLY: 'faces'
 
 concurrency:
   group: models
@@ -46,6 +48,7 @@ jobs:
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r tools/model-conversion/requirements.txt
+          pip install opencv-python-headless scikit-image
 
       - name: Cache upstream weights
         if: steps.check.outputs.skip != 'true'
@@ -54,13 +57,14 @@ jobs:
           path: |
             ~/packwork/*.pth
             ~/packwork/*.zip
-          key: packwork-${{ hashFiles('tools/model-conversion/build_packs.py') }}
+          key: packwork-v2-${{ hashFiles('tools/model-conversion/build_packs.py') }}
 
       - name: Build packs
         if: steps.check.outputs.skip != 'true'
         run: |
           python tools/model-conversion/build_packs.py --work ~/packwork --out dist \
-            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/models-v${PACKS_VERSION}"
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/models-v${PACKS_VERSION}" \
+            ${PACKS_ONLY:+--only "$PACKS_ONLY"} --merge app/src/main/assets/models/packs.json
           ls -la dist
 
       - name: Publish release
@@ -82,8 +86,10 @@ jobs:
             | rescale-pack-denoise.zip | Denoise stage (Real-ESRGAN general + wdn, BSD-3-Clause) |
             | rescale-pack-photo-pro.zip | Pro photo upscaler (Real-ESRGAN x4plus, BSD-3-Clause) |
             | rescale-pack-anime-pro.zip | Pro anime upscaler (Real-ESRGAN x4plus anime 6B, BSD-3-Clause) |
+            | rescale-pack-faces.zip | Faces stage (GFPGAN v1.4, Apache-2.0 + RetinaFace, MIT) |
 
-            Checksums are in packs.json and built into the app.
+            Each release holds only the packs built for it; older packs stay in earlier
+            models-vN releases. Checksums are in packs.json and built into the app.
           files: |
             dist/*.zip
             dist/packs.json

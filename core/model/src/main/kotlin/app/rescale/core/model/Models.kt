@@ -89,7 +89,17 @@ object PackModels {
         packId = Packs.ANIME_PRO, tile = 128, pad = 12,
     )
 
-    val all = listOf(FBCNN, DENOISE_50, DENOISE_100, X4PLUS, X4PLUS_ANIME)
+    /** GFPGAN v1.4 (512² aligned faces, values in [-1,1]); not a tiled pass. */
+    val GFPGAN = ModelSpec(
+        "gfpgan-v1.4", "GFPGAN v1.4 (face restoration)", 1, "in0", "out0", "Apache-2.0",
+        "https://github.com/TencentARC/GFPGAN", packId = Packs.FACES, tile = 512, pad = 0,
+    )
+    val RETINAFACE = ModelSpec(
+        "retinaface-mnet", "RetinaFace MobileNet-0.25 (face detection)", 1, "in0", "out0", "MIT",
+        "https://github.com/xinntao/facexlib", packId = Packs.FACES,
+    )
+
+    val all = listOf(FBCNN, DENOISE_50, DENOISE_100, X4PLUS, X4PLUS_ANIME, GFPGAN, RETINAFACE)
 }
 
 object Packs {
@@ -97,6 +107,7 @@ object Packs {
     const val DENOISE = "denoise"
     const val PHOTO_PRO = "photo-pro"
     const val ANIME_PRO = "anime-pro"
+    const val FACES = "faces"
 
     data class Info(val id: String, val name: String, val description: String, val enables: String)
 
@@ -104,6 +115,7 @@ object Packs {
         Info(JPEG, "JPEG repair", "FBCNN removes blocks, ringing and colour bleeding from compressed images before upscaling.", "De-JPEG stage"),
         Info(DENOISE, "Denoise", "Real-ESRGAN general with its denoise twin blended in, for grainy low-light photos.", "Denoise stage"),
         Info(PHOTO_PRO, "Photo Pro", "Real-ESRGAN x4plus: stronger texture than the built-in model, but about 15–20× slower.", "Pro quality (Photo)"),
+        Info(FACES, "Face restore", "GFPGAN restores small or blurry faces (RetinaFace finds them). Restored faces are partly invented.", "Faces stage"),
         Info(ANIME_PRO, "Anime Pro", "Real-ESRGAN x4plus anime 6B: crisper line art than the built-in model, slower.", "Pro quality (Anime)"),
     )
 
@@ -114,6 +126,7 @@ object Packs {
 enum class Stage(val label: String, val packId: String) {
     DE_JPEG("De-JPEG", Packs.JPEG),
     DENOISE("Denoise", Packs.DENOISE),
+    FACES("Faces", Packs.FACES),
 }
 
 /** Everything a job needs beyond the input. */
@@ -130,6 +143,8 @@ data class JobSettings(
     val strongDenoise: Boolean = false,
     /** Long chains (3+ passes): do the last factor with plain bicubic instead of a model. */
     val finishWithBicubic: Boolean = false,
+    /** Blend of restored faces over the upscale (Faces stage), 0..1. */
+    val faceStrength: Float = 0.6f,
 )
 
 /** One pass of the native chain. */

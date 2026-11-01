@@ -14,6 +14,7 @@
 #include <zlib.h>
 
 #include "chain.h"
+#include "faces.h"
 #include "transcode.h"
 #include "engine.h"
 #include "sinks.h"
@@ -450,6 +451,68 @@ static void testPngReaderAndJpeg(const char* dir) {
     CHECK(!PngReader(std::string(dir) + "/does-not-exist.png").ok());
 }
 
+static void testSimilarity() {
+    // Rotate 20°, scale 1.7, translate (30, -12): recover it from the 5 template points.
+    const float ang = 20.f * 3.14159265f / 180.f, sc = 1.7f;
+    Affine t;
+    t.a = sc * std::cos(ang); t.b = -sc * std::sin(ang); t.c = 30;
+    t.d = sc * std::sin(ang); t.e = sc * std::cos(ang); t.f = -12;
+    float dst[10];
+    for (int i = 0; i < 5; ++i) t.apply(kFfhq512[i * 2], kFfhq512[i * 2 + 1], dst[i * 2], dst[i * 2 + 1]);
+    const Affine r = similarity(kFfhq512, dst, 5);
+    CHECK(std::fabs(r.a - t.a) < 1e-3 && std::fabs(r.b - t.b) < 1e-3 && std::fabs(r.c - t.c) < 1e-2);
+    CHECK(std::fabs(r.d - t.d) < 1e-3 && std::fabs(r.e - t.e) < 1e-3 && std::fabs(r.f - t.f) < 1e-2);
+    const Affine back = r.inverse();
+    float x, y, u, v;
+    r.apply(100, 50, x, y);
+    back.apply(x, y, u, v);
+    CHECK(std::fabs(u - 100) < 1e-2 && std::fabs(v - 50) < 1e-2);
+}
+
+static void testRetinaDecode() {
+    const int size = 640;
+    const auto pri = retinaPriors(size);
+    CHECK(pri.size() == 16800);
+    std::vector<float> loc(pri.size() * 4, 0.f), conf(pri.size() * 2, 0.f), lm(pri.size() * 10, 0.f);
+    for (size_t i = 0; i < pri.size(); ++i) conf[i * 2] = 1.f;
+    // Two overlapping detections on neighbouring anchors + one far away.
+    auto hit = [&](size_t i, float s) { conf[i * 2] = 1 - s; conf[i * 2 + 1] = s; };
+    hit(5000, 0.95f);
+    hit(5002, 0.90f);  // next location (8 px right), shifted back onto the first: NMS should drop it
+    loc[5002 * 4 + 0] = -5.f;  // dx = -5 * 0.1 * 16 px = -8 px
+    hit(100, 0.80f);
+    auto faces = decodeRetina(loc.data(), conf.data(), lm.data(), size, 0.6f, 0.4f);
+    CHECK(faces.size() == 2);
+    if (faces.size() == 2) {
+        CHECK(faces[0].score > faces[1].score);
+        const auto& p = pri[5000];
+        CHECK(std::fabs((faces[0].box[0] + faces[0].box[2]) / 2 - p[0] * size) < 1e-3);
+    }
+}
+
+static void testFaceCompositor() {
+    // A uniform "restored face" (pure red) mapped onto a grey 64×64 input at scale 2.
+    const int W = 64, H = 64, S = 2;
+    RestoredFace f;
+    f.size = 512;
+    f.rgb.assign(3 * 512 * 512, 0.f);
+    std::fill(f.rgb.begin(), f.rgb.begin() + 512 * 512, 1.f);
+    // Template square covers input [16,48)²: image→template = scale 16, offset -256.
+    f.imageToTemplate.a = 16; f.imageToTemplate.e = 16;
+    f.imageToTemplate.c = -256; f.imageToTemplate.f = -256;
+    MemorySink mem(W * S, 3);
+    std::vector<RestoredFace> faces{f};
+    FaceCompositor comp(std::move(faces), S, W * S, 3, 1.f, &mem);
+    std::vector<uint8_t> row(W * S * 3, 128);
+    for (int y = 0; y < H * S; ++y) CHECK(comp.push(row.data()));
+    CHECK(comp.finish());
+    auto px = [&](int x, int y) { return &mem.data[(static_cast<size_t>(y) * W * S + x) * 3]; };
+    CHECK(px(64, 64)[0] == 255 && px(64, 64)[1] == 0);      // centre: fully the face
+    CHECK(px(5, 5)[0] == 128 && px(120, 120)[2] == 128);    // outside: untouched
+    const uint8_t* edge = px(33, 64);                        // just inside the border: feathered
+    CHECK(edge[0] > 128 && edge[0] < 255 && edge[1] < 128 && edge[1] > 0);
+}
+
 int main(int argc, char** argv) {
     const char* tmp = argc > 1 ? argv[1] : ".";
     testPlanAxis();
@@ -470,6 +533,9 @@ int main(int argc, char** argv) {
     testChain(tmp);
     testFitTile();
     testPngReaderAndJpeg(tmp);
+    testSimilarity();
+    testRetinaDecode();
+    testFaceCompositor();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

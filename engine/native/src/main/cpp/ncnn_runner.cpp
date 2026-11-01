@@ -52,8 +52,8 @@ bool NcnnRunner::run(const std::vector<float>& in, int w, int h, std::vector<flo
         for (int y = 0; y < ph; ++y) {
             const float* row = src + static_cast<size_t>(std::min(y, h - 1)) * w;
             float* d = dst + static_cast<size_t>(y) * pw;
-            std::memcpy(d, row, w * sizeof(float));
-            for (int x = w; x < pw; ++x) d[x] = row[w - 1];
+            for (int x = 0; x < w; ++x) d[x] = row[x] * mul_ + add_;
+            for (int x = w; x < pw; ++x) d[x] = row[w - 1] * mul_ + add_;
         }
     }
 
@@ -77,9 +77,15 @@ bool NcnnRunner::run(const std::vector<float>& in, int w, int h, std::vector<flo
     out.resize(3 * oplane);
     for (int c = 0; c < 3; ++c) {
         const float* src = r.channel(c);
-        for (int y = 0; y < oh; ++y)
-            std::memcpy(out.data() + c * oplane + static_cast<size_t>(y) * ow, src + static_cast<size_t>(y) * r.w,
-                        ow * sizeof(float));
+        for (int y = 0; y < oh; ++y) {
+            float* d = out.data() + c * oplane + static_cast<size_t>(y) * ow;
+            const float* s = src + static_cast<size_t>(y) * r.w;
+            if (mul_ == 1.f && add_ == 0.f) {
+                std::memcpy(d, s, ow * sizeof(float));
+            } else {
+                for (int x = 0; x < ow; ++x) d[x] = (s[x] - add_) / mul_;
+            }
+        }
     }
     return true;
 }

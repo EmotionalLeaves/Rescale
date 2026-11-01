@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "engine.h"
+#include "faces.h"
 
 namespace rescale {
 
@@ -33,8 +34,10 @@ int fitTile(int tile, int outWidth, int scale, long long maxBandBytes);
 // Number of tiles a pass over a w×h image will run.
 int countTiles(int w, int h, const EngineOptions& opt);
 
+// [faces]: restored faces (input-image space) blended into the final output with [faceStrength].
 ChainResult runChain(const Image& input, std::vector<PassSpec>& passes, const std::string& tmpDir,
                      long long maxBandBytes, const FinalSinkFactory& makeFinal, const ProgressFn& progress,
-                     const std::atomic<bool>* cancel);
+                     const std::atomic<bool>* cancel, std::vector<RestoredFace> faces = {},
+                     float faceStrength = 0.f);
 
 }  // namespace rescale

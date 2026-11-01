@@ -99,7 +99,8 @@ def main():
     n.load_model(args.out + ".bin")
     ex = n.create_extractor()
     ex.input("in0", ncnn.Mat(img))
-    ex.input("in1", ncnn.Mat(np.array([0.7], dtype=np.float32)))
+    qf = np.array([0.7], dtype=np.float32)  # keep alive: ncnn.Mat wraps the buffer
+    ex.input("in1", ncnn.Mat(qf))
     _, out = ex.extract("out0")
     got = np.array(out)
     mse = float(np.mean((np.clip(got, 0, 1) - np.clip(ref[0].numpy(), 0, 1)) ** 2))

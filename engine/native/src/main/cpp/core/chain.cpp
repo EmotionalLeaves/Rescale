@@ -85,7 +85,7 @@ int countTiles(int w, int h, const EngineOptions& opt) {
 
 ChainResult runChain(const Image& input, std::vector<PassSpec>& passes, const std::string& tmpDir,
                      long long maxBandBytes, const FinalSinkFactory& makeFinal, const ProgressFn& progress,
-                     const std::atomic<bool>* cancel) {
+                     const std::atomic<bool>* cancel, std::vector<RestoredFace> faces, float faceStrength) {
     ChainResult res;
     if (passes.empty()) {
         res.status = kModelError;
@@ -114,6 +114,7 @@ ChainResult runChain(const Image& input, std::vector<PassSpec>& passes, const st
     int base = 0;
     std::unique_ptr<Mapped> current;  // mapped output of the previous pass
     std::unique_ptr<Image> currentImg;
+    std::unique_ptr<FaceCompositor> compositor;
 
     for (size_t i = 0; i < passes.size(); ++i) {
         PassSpec& p = passes[i];
@@ -130,6 +131,11 @@ ChainResult runChain(const Image& input, std::vector<PassSpec>& passes, const st
             if (!out) {
                 res.status = kWriteError;
                 return res;
+            }
+            if (!faces.empty() && faceStrength > 0.f) {
+                const float scale = static_cast<float>(g.outW) / input.width();
+                compositor = std::make_unique<FaceCompositor>(std::move(faces), scale, g.outW, channels, faceStrength, out);
+                out = compositor.get();
             }
         } else {
             raw = std::make_unique<RawRgbaSink>(rawPath, g.outW, channels);

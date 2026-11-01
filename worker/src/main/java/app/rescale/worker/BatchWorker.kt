@@ -27,6 +27,7 @@ import app.rescale.engine.pipeline.EtaEstimator
 import app.rescale.engine.pipeline.ExportFormat
 import app.rescale.engine.pipeline.ExportOptions
 import app.rescale.engine.pipeline.Exporter
+import app.rescale.engine.pipeline.FaceProbe
 import app.rescale.engine.pipeline.Gallery
 import app.rescale.engine.pipeline.ImageAnalyzer
 import app.rescale.engine.pipeline.ImageLoader
@@ -85,7 +86,8 @@ class BatchWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         try {
             val info = runCatching { ImageLoader.info(ctx, input) }.getOrElse { return done(false, "Can't read image") }
             val available = Stage.entries.filter { it.packId in upscaler.packs.installed() }.toSet()
-            val auto = ImageAnalyzer.analyze(ctx, input, info)?.let { AutoPlanner.plan(it, available).settings }
+            val faces = FaceProbe.smallFaces(ctx, input, info, upscaler.packs)
+            val auto = ImageAnalyzer.analyze(ctx, input, info)?.let { AutoPlanner.plan(it.copy(smallFaces = faces), available).settings }
                 ?: JobSettings(Mode.PHOTO, 4, Tuning.defaultFor(Mode.PHOTO))
             val fixedScale = inputData.getInt(KEY_SCALE, 0)
             val settings = if (fixedScale > 0) auto.copy(scale = fixedScale) else auto

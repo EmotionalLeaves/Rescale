@@ -6,7 +6,10 @@ import android.net.Uri
 import android.os.SystemClock
 import app.rescale.core.model.JobSettings
 import app.rescale.core.model.Limits
+import app.rescale.core.model.PackModels
+import app.rescale.core.model.Packs
 import app.rescale.core.model.Planner
+import app.rescale.core.model.Stage
 import app.rescale.engine.nativebridge.NativeEngine
 import app.rescale.engine.nativebridge.NativeStatus
 import app.rescale.engine.nativebridge.PostOptions
@@ -103,10 +106,30 @@ class Upscaler(private val context: Context, appVersion: Long) {
             sessions.forEach { it.close() }
             return UpscaleOutcome.Failed(e.message ?: "Couldn't load the model")
         }
+        // Faces stage: detector + GFPGAN, blended into the final output.
+        var faces: NativeEngine.Faces? = null
+        var detector: NativeEngine.FaceDetector? = null
+        if (Stage.FACES in req.settings.stages && Packs.FACES in packs.installed()) {
+            try {
+                val (dp, db) = models.resolve(PackModels.RETINAFACE)
+                val (gp, gb) = models.resolve(PackModels.GFPGAN)
+                detector = NativeEngine.openFaceDetector(dp.path, db.path, backends.gpuTrusted(), BackendSelector.cpuThreads())
+                    ?: error("Couldn't load the face detector")
+                val gfp = backends.openTrusted(PackModels.GFPGAN, gp, gb).also { sessions += it }
+                gfp.setNormalization(2f, -1f)
+                faces = NativeEngine.Faces(detector, gfp, req.settings.faceStrength, MAX_FACE_PX)
+            } catch (e: Exception) {
+                detector?.close()
+                sessions.forEach { it.close() }
+                return UpscaleOutcome.Failed(e.message ?: "Couldn't load face models")
+            }
+        }
+
         val bitmap = try {
             ImageLoader.decodeForEngine(context, req.input)
         } catch (e: Throwable) {
             sessions.forEach { it.close() }
+            detector?.close()
             return UpscaleOutcome.Failed(if (e is OutOfMemoryError) "Not enough memory to open this image" else e.message ?: "Decode failed")
         }
 
@@ -131,9 +154,11 @@ class Upscaler(private val context: Context, appVersion: Long) {
                 previewPath = preview.path,
                 previewMax = PREVIEW_MAX,
                 listener = ProgressListener { d, t -> onProgress(d, t) },
+                faces = faces,
             )
         } finally {
             sessions.forEach { it.close() }
+            detector?.close()
             bitmap.recycle()
             tmp.deleteRecursively()
         }
@@ -141,7 +166,7 @@ class Upscaler(private val context: Context, appVersion: Long) {
         return when (status) {
             NativeStatus.OK -> UpscaleOutcome.Success(
                 output, preview, outW.toInt(), outH.toInt(), backend, SystemClock.elapsedRealtime() - started,
-                plan.passes.joinToString(" → ") { it.model.displayName },
+                (plan.passes.map { it.model.displayName } + listOfNotNull(faces?.let { "GFPGAN faces" })).joinToString(" → "),
             )
             NativeStatus.CANCELLED -> {
                 output.delete(); preview.delete()
@@ -166,6 +191,9 @@ class Upscaler(private val context: Context, appVersion: Long) {
 
     companion object {
         const val CPU_TILE = 128
+
+        /** Faces bigger than this (input px) are left alone: they already have real detail. */
+        const val MAX_FACE_PX = 400f
         const val GENTLE_TILE = 96
         const val PREVIEW_MAX = 2048
     }

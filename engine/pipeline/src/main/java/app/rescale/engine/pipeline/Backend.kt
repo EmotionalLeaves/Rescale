@@ -77,6 +77,21 @@ class BackendSelector(context: Context, private val appVersion: Long) {
         return maxDiff < 0.06f && mean > 0.05
     }
 
+    /**
+     * For fixed-size models that can't run the small probe tile (GFPGAN): use the GPU only if the
+     * driver already passed the self-test with the main upscaler.
+     */
+    fun gpuTrusted(): Boolean = !forceCpu && NativeEngine.gpuCount() > 0 &&
+        prefs.all.filterKeys { it.startsWith("gpu_ok_") }.values.let { v -> v.isNotEmpty() && v.all { it == true } }
+
+    fun openTrusted(spec: ModelSpec, param: File, bin: File): NativeEngine.Session {
+        val threads = if (gentle) 2 else cpuThreads()
+        val gpu = gpuTrusted()
+        return NativeEngine.open(param.path, bin.path, spec.inputBlob, spec.outputBlob, spec.scale, gpu, threads)
+            ?: NativeEngine.open(param.path, bin.path, spec.inputBlob, spec.outputBlob, spec.scale, false, threads)
+            ?: error("Couldn't load model ${spec.id}")
+    }
+
     fun resetSelfTests() {
         val e = prefs.edit()
         prefs.all.keys.filter { it.startsWith("gpu_ok_") }.forEach { e.remove(it) }

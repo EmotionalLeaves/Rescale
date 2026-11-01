@@ -26,6 +26,11 @@ public:
     }
     // Pad tiles internally (edge replicate) to a multiple of this (UNets need 8).
     void setAlignment(int a) { align_ = a > 0 ? a : 1; }
+    // Model value range: feeds in*mul+add, returns (out-add)/mul. GFPGAN uses [-1,1]: (2, -1).
+    void setNormalization(float mul, float add) {
+        mul_ = mul;
+        add_ = add;
+    }
 
 private:
     ncnn::Net net_;
@@ -35,6 +40,7 @@ private:
     std::string extraBlob_;
     std::vector<float> extraValues_;
     int align_ = 1;
+    float mul_ = 1.f, add_ = 0.f;
 };
 
 // Vulkan instance is process-wide; created lazily, returns number of GPUs.

@@ -188,6 +188,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         const val KEY_STRONG_DENOISE = "strongDenoise"
         const val KEY_PIPELINE = "pipeline"
         const val KEY_FINISH_BICUBIC = "finishBicubic"
+        const val KEY_FACE_STRENGTH = "faceStrength"
 
         private fun settingsFrom(d: androidx.work.Data): JobSettings {
             val mode = Mode.valueOf(d.getString(KEY_MODE) ?: Mode.PHOTO.name)
@@ -204,6 +205,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 jpegQuality = d.getInt(KEY_JPEG_QUALITY, 50),
                 strongDenoise = d.getBoolean(KEY_STRONG_DENOISE, false),
                 finishWithBicubic = d.getBoolean(KEY_FINISH_BICUBIC, false),
+                faceStrength = d.getFloat(KEY_FACE_STRENGTH, 0.6f).coerceIn(0f, 1f),
             )
         }
         const val KEY_OUTPUT = "output"
@@ -234,7 +236,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                         KEY_DETAIL to s.tuning.detail, KEY_COLOR_FIX to s.tuning.colorFix,
                         KEY_LUMA_ONLY to s.tuning.lumaOnly, KEY_STAGES to s.stages.map { it.name }.toTypedArray(),
                         KEY_PRO to s.pro, KEY_JPEG_QUALITY to s.jpegQuality, KEY_STRONG_DENOISE to s.strongDenoise,
-                        KEY_FINISH_BICUBIC to s.finishWithBicubic,
+                        KEY_FINISH_BICUBIC to s.finishWithBicubic, KEY_FACE_STRENGTH to s.faceStrength,
                     ),
                 )
                 .setConstraints(Constraints.Builder().setRequiresCharging(onlyWhileCharging).build())

@@ -27,6 +27,8 @@ data class Analysis(
     /** Fraction of pixels identical (±0.5 level) to their 4 neighbours: digital art has lots. */
     val exactFlatFraction: Float,
     val grayscale: Boolean,
+    /** Faces small enough to benefit from restoration (set when the face pack is installed). */
+    val smallFaces: Int = 0,
 ) {
     val tiny: Boolean get() = min(width, height) < 256
     val heavyJpeg: Boolean get() = (jpegQuality != null && jpegQuality < 50) || blockiness > 1.45f
@@ -48,8 +50,13 @@ data class Analysis(
             if (blurry) add("soft")
             if (grayscale) add("black-and-white")
         }
+        val faces = when (smallFaces) {
+            0 -> ""
+            1 -> " with a face"
+            else -> " with $smallFaces faces"
+        }
         val noun = if (looksLikeArt) "illustration" else "photo"
-        val text = if (adjectives.isEmpty()) "clean $noun" else adjectives.joinToString(", ") + " $noun"
+        val text = (if (adjectives.isEmpty()) "clean $noun" else adjectives.joinToString(", ") + " $noun") + faces
         return text.replaceFirstChar { it.uppercase() }
     }
 

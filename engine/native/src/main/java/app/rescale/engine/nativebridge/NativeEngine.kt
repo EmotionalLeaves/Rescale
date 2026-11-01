@@ -48,6 +48,9 @@ object NativeEngine {
         /** Feed [values] to the model's second input [blob] on every tile. */
         fun setExtraInput(blob: String, values: FloatArray) = nativeSetExtraInput(handle, blob, values)
 
+        /** Model value range: feeds in*mul+add (GFPGAN wants [-1,1]: mul 2, add -1). */
+        fun setNormalization(mul: Float, add: Float) = nativeSetNormalization(handle, mul, add)
+
         /** Pad tiles to a multiple of [align] inside the runner. */
         fun setAlignment(align: Int) = nativeSetAlignment(handle, align)
 
@@ -60,6 +63,25 @@ object NativeEngine {
             handle = 0L
         }
     }
+
+    /** RetinaFace detector (separate from Sessions: it has three outputs and no tiling). */
+    class FaceDetector internal constructor(private var handle: Long) : AutoCloseable {
+        internal val raw get() = handle
+
+        /** (count, largest face px, smallest eye distance px) in the oriented image, or null. */
+        fun detect(bitmap: Bitmap, exifOrientation: Int): FloatArray? = nativeDetectFaces(handle, bitmap, exifOrientation)
+
+        override fun close() {
+            if (handle != 0L) nativeDestroyDetector(handle)
+            handle = 0L
+        }
+    }
+
+    fun openFaceDetector(param: String, bin: String, gpu: Boolean, threads: Int): FaceDetector? =
+        nativeCreateDetector(param, bin, gpu, threads).takeIf { it != 0L }?.let { FaceDetector(it) }
+
+    /** Face restoration applied to the final output: detect on the input, restore, blend. */
+    class Faces(val detector: FaceDetector, val gfpgan: Session, val strength: Float, val maxFacePx: Float)
 
     /** One pass of a chain: run [session], then area-downsample by [downsample]. */
     class Pass(
@@ -85,6 +107,7 @@ object NativeEngine {
         previewPath: String?,
         previewMax: Int,
         listener: ProgressListener?,
+        faces: Faces? = null,
     ): Int = nativeRunChain(
         passes.map { it.session.rawHandle }.toLongArray(),
         passes.map { it.tile }.toIntArray(),
@@ -95,6 +118,7 @@ object NativeEngine {
         passes.map { it.post.colorFix }.toBooleanArray(),
         passes.map { it.post.preBlur }.toFloatArray(),
         bitmap, exifOrientation, maxBandBytes, tmpDir, outPath, previewPath, previewMax, listener,
+        faces?.detector?.raw ?: 0L, faces?.gfpgan?.rawHandle ?: 0L, faces?.strength ?: 0f, faces?.maxFacePx ?: 0f,
     )
 
     /** Streams a PNG into a baseline JPEG (alpha over white). Works for any size up to 65535 px. */
@@ -134,5 +158,10 @@ object NativeEngine {
         details: FloatArray, lumaOnly: BooleanArray, colorFix: BooleanArray, preBlur: FloatArray,
         bitmap: Bitmap, orientation: Int, maxBandBytes: Long, tmpDir: String,
         outPath: String, previewPath: String?, previewMax: Int, listener: ProgressListener?,
+        detector: Long, gfpgan: Long, faceStrength: Float, maxFacePx: Float,
     ): Int
+    @JvmStatic private external fun nativeCreateDetector(param: String, bin: String, gpu: Boolean, threads: Int): Long
+    @JvmStatic private external fun nativeDestroyDetector(handle: Long)
+    @JvmStatic private external fun nativeDetectFaces(handle: Long, bitmap: Bitmap, orientation: Int): FloatArray?
+    @JvmStatic private external fun nativeSetNormalization(handle: Long, mul: Float, add: Float)
 }

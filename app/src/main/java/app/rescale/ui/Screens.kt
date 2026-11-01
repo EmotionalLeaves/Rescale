@@ -150,6 +150,7 @@ fun EditorScreen(
     onPro: (Boolean) -> Unit,
     onOpenModels: () -> Unit,
     onFinishBicubic: (Boolean) -> Unit,
+    onFaceStrength: (Float) -> Unit,
     batchActive: Boolean,
     onStart: () -> Unit,
     onDismissError: () -> Unit,
@@ -234,7 +235,7 @@ fun EditorScreen(
             )
         }
 
-        RestorationControls(state, onToggleStage, onPro, onOpenModels)
+        RestorationControls(state, onToggleStage, onPro, onOpenModels, onFaceStrength)
 
         DetailControls(state, onDetail, onColorFix, onLumaOnly)
 
@@ -294,6 +295,7 @@ private fun RestorationControls(
     onToggleStage: (Stage) -> Unit,
     onPro: (Boolean) -> Unit,
     onOpenModels: () -> Unit,
+    onFaceStrength: (Float) -> Unit,
 ) {
     Column {
         Text("Restoration", style = MaterialTheme.typography.titleSmall)
@@ -301,7 +303,7 @@ private fun RestorationControls(
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Stage.entries.forEach { stage ->
                 val available = stage.packId in state.installedPacks
-                val usable = available && !(stage == Stage.DENOISE && state.mode != Mode.PHOTO)
+                val usable = available && !(stage != Stage.DE_JPEG && state.mode != Mode.PHOTO)
                 FilterChip(
                     selected = usable && stage in state.stages,
                     onClick = { if (available) onToggleStage(stage) else onOpenModels() },
@@ -312,6 +314,14 @@ private fun RestorationControls(
                     } else null,
                 )
             }
+        }
+        if (Stage.FACES in state.stages) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Face restore strength", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text("${(state.faceStrength * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+            }
+            Slider(value = state.faceStrength, onValueChange = onFaceStrength, valueRange = 0.1f..1f)
+            Notice("Restored faces are partly invented. Small faces can end up looking like someone else. Don't use results as evidence.")
         }
         if (state.proAvailable) {
             ToggleRow(

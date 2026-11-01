@@ -10,7 +10,7 @@ Model weights are data, but their licenses still apply. Every model shipped or o
 | `realesr-animevideov3-x2.{param,bin}` | `realesrgan-ncnn-vulkan-20220424` release, Real-ESRGAN v0.2.5.0 | BSD-3-Clause, © 2021 Xintao Wang | Used as published |
 | `realesr-animevideov3-x4.{param,bin}` | same | BSD-3-Clause, © 2021 Xintao Wang | Used as published |
 
-## Downloadable packs (release `models-v1`)
+## Downloadable packs (releases `models-v1`, `models-v2`)
 
 Built by `.github/workflows/models.yml` with `tools/model-conversion/build_packs.py`. Each zip contains a `LICENSE.txt`.
 
@@ -20,6 +20,7 @@ Built by `.github/workflows/models.yml` with `tools/model-conversion/build_packs
 | `denoise` | `realesr-general-dn50`, `realesr-general-dn100` | `realesr-general-x4v3` interpolated with `realesr-general-wdn-x4v3` at 50% and 100% | BSD-3-Clause |
 | `photo-pro` | `realesrgan-x4plus` | `realesrgan-ncnn-vulkan-20220424` | BSD-3-Clause |
 | `anime-pro` | `realesrgan-x4plus-anime` | `realesrgan-ncnn-vulkan-20220424` | BSD-3-Clause |
+| `faces` (v2) | `gfpgan-v1.4`, `retinaface-mnet` | [GFPGAN](https://github.com/TencentARC/GFPGAN) `GFPGANv1.4.pth` (clean architecture: no StyleGAN2 CUDA ops), modulated convs rewritten into an equivalent fp16-safe form (`export_gfpgan.py`); [facexlib](https://github.com/xinntao/facexlib) RetinaFace MobileNet-0.25 | Apache-2.0 / MIT |
 
 ## Not shipped
 

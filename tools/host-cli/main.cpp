@@ -4,6 +4,7 @@
 //   rescale_cli <model-base> <in-blob> <out-blob> <scale> <in.rgba> <w> <h> <out.png>
 //               [--orientation N] [--downsample K] [--tile T] [--threads N]
 //               [--detail 0..1] [--luma 0|1] [--colorfix 0|1]
+//               [--faces <retinaface-base> <gfpgan-base>] [--face-strength 0..1]
 //               [--repeat K]  (chain the upscaler K times)
 //               [--dejpeg <fbcnn-model-base> <quality 1..100>]   (1× FBCNN pre-pass)
 //
@@ -19,6 +20,7 @@
 #include "core/chain.h"
 #include "core/engine.h"
 #include "core/sinks.h"
+#include "face_restorer.h"
 #include "ncnn_runner.h"
 
 using namespace rescale;
@@ -35,6 +37,8 @@ int main(int argc, char** argv) {
     PostOptions post;
     std::string dejpeg;
     int repeat = 1;
+    std::string faceDet, faceGen;
+    float faceStrength = 0.7f;
     int quality = 50;
     for (int i = 9; i + 1 < argc; i += 2) {
         if (!std::strcmp(argv[i], "--orientation")) orientation = std::atoi(argv[i + 1]);
@@ -45,6 +49,12 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--luma")) post.lumaOnly = std::atoi(argv[i + 1]) != 0;
         else if (!std::strcmp(argv[i], "--colorfix")) post.colorFix = std::atoi(argv[i + 1]) != 0;
         else if (!std::strcmp(argv[i], "--repeat")) repeat = std::atoi(argv[i + 1]);
+        else if (!std::strcmp(argv[i], "--face-strength")) faceStrength = static_cast<float>(std::atof(argv[i + 1]));
+        else if (!std::strcmp(argv[i], "--faces") && i + 2 < argc) {
+            faceDet = argv[i + 1];
+            faceGen = argv[i + 2];
+            ++i;
+        }
         else if (!std::strcmp(argv[i], "--dejpeg") && i + 2 < argc) {
             dejpeg = argv[i + 1];
             quality = std::atoi(argv[i + 2]);
@@ -96,11 +106,30 @@ int main(int argc, char** argv) {
         passes.push_back(up);
     }
 
+    std::vector<RestoredFace> faces;
+    const auto tf = std::chrono::steady_clock::now();
+    if (!faceDet.empty()) {
+        FaceDetector det(false, threads);
+        NcnnRunner gfp(1, false, threads, "in0", "out0");
+        if (!det.load(faceDet + ".param", faceDet + ".bin") || !gfp.load(faceGen + ".param", faceGen + ".bin")) {
+            std::fprintf(stderr, "can't load face models\n");
+            return 1;
+        }
+        gfp.setNormalization(2.f, -1.f);
+        int found = 0;
+        std::vector<Face> raw;
+        faces = restoreFaces(img, det, gfp, 8, 400.f, &found, &raw);
+        for (const Face& f : raw)
+            std::fprintf(stderr, "  face score %.3f box %.0f,%.0f-%.0f,%.0f\n", f.score, f.box[0], f.box[1], f.box[2], f.box[3]);
+        std::fprintf(stderr, "faces: %d detected, %zu restored in %.2fs\n", found, faces.size(),
+                     std::chrono::duration<double>(std::chrono::steady_clock::now() - tf).count());
+    }
+
     std::unique_ptr<PngWriter> png;
     const auto t0 = std::chrono::steady_clock::now();
     const ChainResult r = runChain(img, passes, "/tmp", 0,
         [&](int fw, int fh, int c) { png = std::make_unique<PngWriter>(argv[8], fw, fh, c); return png.get(); },
-        [](int d, int t) { std::fprintf(stderr, "\rtile %d/%d", d, t); }, nullptr);
+        [](int d, int t) { std::fprintf(stderr, "\rtile %d/%d", d, t); }, nullptr, std::move(faces), faceStrength);
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::fprintf(stderr, "\nstatus=%d  %dx%d -> %dx%d in %.2fs\n", r.status, img.width(), img.height(), r.width,
                  r.height, secs);

@@ -1,4 +1,5 @@
 torch>=2.3
+torchvision
 pnnx>=20240410
 ncnn>=1.0.20240410
 numpy

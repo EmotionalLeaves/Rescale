@@ -151,6 +151,15 @@ class AnalysisTest {
         assertEquals("De-JPEG", with.chips.first())
     }
 
+    @Test fun smallFacesTurnOnFaceStageOnlyForPhotosWithThePack() {
+        val a = analyse(photo()).copy(smallFaces = 2)
+        assertEquals(listOf(Stage.FACES), AutoPlanner.plan(a, setOf(Stage.FACES)).settings.stages)
+        assertTrue(AutoPlanner.plan(a, emptySet()).settings.stages.isEmpty())
+        assertTrue(a.describe().endsWith("with 2 faces"))
+        val art = analyse(art()).copy(smallFaces = 1)
+        assertFalse(Stage.FACES in AutoPlanner.plan(art, setOf(Stage.FACES)).settings.stages)
+    }
+
     @Test fun bigImagesGet2x() {
         val a = analyse(photo()).copy(width = 4000, height = 3000)
         assertEquals(2, AutoPlanner.plan(a).settings.scale)

@@ -19,6 +19,7 @@ object AutoPlanner {
         val stages = buildList {
             if (a.someJpeg) add(Stage.DE_JPEG)
             if (a.noisy && mode == Mode.PHOTO) add(Stage.DENOISE)
+            if (a.smallFaces > 0 && mode == Mode.PHOTO) add(Stage.FACES)
         }.filter { it in available }
 
         // Generative detail goes down when the source is damaged: the model would
