@@ -10,6 +10,17 @@ Model weights are data, but their licenses still apply. Every model shipped or o
 | `realesr-animevideov3-x2.{param,bin}` | `realesrgan-ncnn-vulkan-20220424` release, Real-ESRGAN v0.2.5.0 | BSD-3-Clause, © 2021 Xintao Wang | Used as published |
 | `realesr-animevideov3-x4.{param,bin}` | same | BSD-3-Clause, © 2021 Xintao Wang | Used as published |
 
+## Downloadable packs (release `models-v1`)
+
+Built by `.github/workflows/models.yml` with `tools/model-conversion/build_packs.py`. Each zip contains a `LICENSE.txt`.
+
+| Pack | Files | Origin | License |
+|---|---|---|---|
+| `jpeg` | `fbcnn-color` | [FBCNN](https://github.com/jiaxi-jiang/FBCNN) `fbcnn_color.pth` v1.0, converted to ncnn FP16 with the quality factor as a second input (`export_fbcnn.py`) | Apache-2.0 |
+| `denoise` | `realesr-general-dn50`, `realesr-general-dn100` | `realesr-general-x4v3` interpolated with `realesr-general-wdn-x4v3` at 50% and 100% | BSD-3-Clause |
+| `photo-pro` | `realesrgan-x4plus` | `realesrgan-ncnn-vulkan-20220424` | BSD-3-Clause |
+| `anime-pro` | `realesrgan-x4plus-anime` | `realesrgan-ncnn-vulkan-20220424` | BSD-3-Clause |
+
 ## Not shipped
 
 - **CodeFormer** (S-Lab License 1.0, non-commercial) isn't GPL/OSI-compatible and won't be bundled. If ever offered, it will only be an opt-in download with a clear notice.

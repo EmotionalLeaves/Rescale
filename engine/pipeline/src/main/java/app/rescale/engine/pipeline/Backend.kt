@@ -21,15 +21,23 @@ class BackendSelector(context: Context, private val appVersion: Long) {
         get() = prefs.getBoolean("force_cpu", false)
         set(v) = prefs.edit().putBoolean("force_cpu", v).apply()
 
-    fun open(spec: ModelSpec, param: File, bin: File): NativeEngine.Session {
+    /** Applies a model's extra input / alignment to a freshly opened session. */
+    private fun configure(s: NativeEngine.Session, spec: ModelSpec, extra: FloatArray?): NativeEngine.Session {
+        if (spec.alignment > 1) s.setAlignment(spec.alignment)
+        if (spec.extraInput != null) s.setExtraInput(spec.extraInput!!, extra ?: floatArrayOf(0.5f))
+        return s
+    }
+
+    fun open(spec: ModelSpec, param: File, bin: File, extra: FloatArray? = null): NativeEngine.Session {
         val threads = cpuThreads()
         val key = "gpu_ok_${spec.id}_$appVersion"
         val wantGpu = !forceCpu && NativeEngine.gpuCount() > 0 && prefs.getBoolean(key, true)
         if (wantGpu) {
             val gpu = NativeEngine.open(param.path, bin.path, spec.inputBlob, spec.outputBlob, spec.scale, true, threads)
+                ?.let { configure(it, spec, extra) }
             if (gpu != null && gpu.usingGpu) {
                 if (prefs.contains(key)) return gpu
-                val ok = selfTest(gpu, spec, param, bin, threads)
+                val ok = selfTest(gpu, spec, param, bin, threads, extra)
                 prefs.edit().putBoolean(key, ok).apply()
                 if (ok) return gpu
                 gpu.close()
@@ -38,12 +46,16 @@ class BackendSelector(context: Context, private val appVersion: Long) {
             }
         }
         return NativeEngine.open(param.path, bin.path, spec.inputBlob, spec.outputBlob, spec.scale, false, threads)
+            ?.let { configure(it, spec, extra) }
             ?: error("Couldn't load model ${spec.id}")
     }
 
-    private fun selfTest(gpu: NativeEngine.Session, spec: ModelSpec, param: File, bin: File, threads: Int): Boolean {
+    private fun selfTest(
+        gpu: NativeEngine.Session, spec: ModelSpec, param: File, bin: File, threads: Int, extra: FloatArray?,
+    ): Boolean {
         val g = gpu.probe() ?: return false
         val cpu = NativeEngine.open(param.path, bin.path, spec.inputBlob, spec.outputBlob, spec.scale, false, threads)
+            ?.let { configure(it, spec, extra) }
             ?: return false
         val c = cpu.use { it.probe() } ?: return false
         if (g.size != c.size) return false

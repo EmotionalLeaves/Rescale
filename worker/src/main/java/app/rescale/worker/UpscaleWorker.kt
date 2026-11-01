@@ -18,7 +18,9 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import app.rescale.core.model.JobSettings
 import app.rescale.core.model.Mode
+import app.rescale.core.model.Stage
 import app.rescale.core.model.Tuning
 import app.rescale.engine.pipeline.Cancellable
 import app.rescale.engine.pipeline.UpscaleOutcome
@@ -47,6 +49,7 @@ sealed interface JobState {
         val backend: String,
         val millis: Long,
         val input: Uri?,
+        val pipeline: String = "",
     ) : JobState
     data class Failed(val message: String) : JobState
     data object Cancelled : JobState
@@ -62,13 +65,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
 
     override suspend fun doWork(): Result {
         val input = inputData.getString(KEY_INPUT)?.let(Uri::parse) ?: return Result.failure()
-        val mode = Mode.valueOf(inputData.getString(KEY_MODE) ?: Mode.PHOTO.name)
-        val scale = inputData.getInt(KEY_SCALE, 4)
-        val tuning = Tuning(
-            detail = inputData.getFloat(KEY_DETAIL, mode.defaultDetail).coerceIn(0f, 1f),
-            colorFix = inputData.getBoolean(KEY_COLOR_FIX, true),
-            lumaOnly = inputData.getBoolean(KEY_LUMA_ONLY, false),
-        )
+        val settings = settingsFrom(inputData)
         val outDir = resultDir(applicationContext, id)
 
         ensureChannel()
@@ -89,7 +86,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             }
             val r = withContext(Dispatchers.Default) {
                 upscaler.run(
-                    UpscaleRequest(input, mode, scale, tuning),
+                    UpscaleRequest(input, settings),
                     outDir,
                     onStarted = { canceller.set(it) },
                     onProgress = { d, t -> reportProgress(d, t) },
@@ -110,6 +107,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                     KEY_BACKEND to outcome.backend.name,
                     KEY_MILLIS to outcome.millis,
                     KEY_INPUT to input.toString(),
+                    KEY_PIPELINE to outcome.pipeline,
                 ),
             )
             is UpscaleOutcome.Failed -> Result.failure(workDataOf(KEY_ERROR to outcome.message))
@@ -175,6 +173,28 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         const val KEY_DETAIL = "detail"
         const val KEY_COLOR_FIX = "colorFix"
         const val KEY_LUMA_ONLY = "lumaOnly"
+        const val KEY_STAGES = "stages"
+        const val KEY_PRO = "pro"
+        const val KEY_JPEG_QUALITY = "jpegQuality"
+        const val KEY_STRONG_DENOISE = "strongDenoise"
+        const val KEY_PIPELINE = "pipeline"
+
+        private fun settingsFrom(d: androidx.work.Data): JobSettings {
+            val mode = Mode.valueOf(d.getString(KEY_MODE) ?: Mode.PHOTO.name)
+            return JobSettings(
+                mode = mode,
+                scale = d.getInt(KEY_SCALE, 4),
+                tuning = Tuning(
+                    detail = d.getFloat(KEY_DETAIL, mode.defaultDetail).coerceIn(0f, 1f),
+                    colorFix = d.getBoolean(KEY_COLOR_FIX, true),
+                    lumaOnly = d.getBoolean(KEY_LUMA_ONLY, false),
+                ),
+                stages = d.getStringArray(KEY_STAGES).orEmpty().mapNotNull { n -> Stage.entries.find { it.name == n } },
+                pro = d.getBoolean(KEY_PRO, false),
+                jpegQuality = d.getInt(KEY_JPEG_QUALITY, 50),
+                strongDenoise = d.getBoolean(KEY_STRONG_DENOISE, false),
+            )
+        }
         const val KEY_OUTPUT = "output"
         const val KEY_PREVIEW = "preview"
         const val KEY_WIDTH = "width"
@@ -193,21 +213,16 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         fun formatEta(seconds: Long): String =
             if (seconds >= 60) "${seconds / 60} min ${seconds % 60} s" else "$seconds s"
 
-        fun enqueue(
-            context: Context,
-            input: Uri,
-            mode: Mode,
-            scale: Int,
-            tuning: Tuning = Tuning.defaultFor(mode),
-            onlyWhileCharging: Boolean = false,
-        ) {
+        fun enqueue(context: Context, input: Uri, s: JobSettings, onlyWhileCharging: Boolean = false) {
             // One job at a time (batch queue comes later): clear old results first.
             resultsRoot(context).deleteRecursively()
             val request = OneTimeWorkRequestBuilder<UpscaleWorker>()
                 .setInputData(
                     workDataOf(
-                        KEY_INPUT to input.toString(), KEY_MODE to mode.name, KEY_SCALE to scale,
-                        KEY_DETAIL to tuning.detail, KEY_COLOR_FIX to tuning.colorFix, KEY_LUMA_ONLY to tuning.lumaOnly,
+                        KEY_INPUT to input.toString(), KEY_MODE to s.mode.name, KEY_SCALE to s.scale,
+                        KEY_DETAIL to s.tuning.detail, KEY_COLOR_FIX to s.tuning.colorFix,
+                        KEY_LUMA_ONLY to s.tuning.lumaOnly, KEY_STAGES to s.stages.map { it.name }.toTypedArray(),
+                        KEY_PRO to s.pro, KEY_JPEG_QUALITY to s.jpegQuality, KEY_STRONG_DENOISE to s.strongDenoise,
                     ),
                 )
                 .setConstraints(Constraints.Builder().setRequiresCharging(onlyWhileCharging).build())
@@ -244,6 +259,7 @@ class UpscaleWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                             out, prev, d.getInt(KEY_WIDTH, 0), d.getInt(KEY_HEIGHT, 0),
                             d.getString(KEY_BACKEND) ?: "", d.getLong(KEY_MILLIS, 0),
                             d.getString(KEY_INPUT)?.let(Uri::parse),
+                            d.getString(KEY_PIPELINE) ?: "",
                         )
                     }
                     WorkInfo.State.FAILED ->

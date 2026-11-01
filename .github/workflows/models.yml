@@ -1,0 +1,103 @@
+name: Model packs
+
+# Builds the downloadable model packs from upstream weights, publishes them as the
+# "models-vN" release, and commits their checksums into the app's bundled manifest.
+# Packs are immutable: bump PACKS_VERSION (below) to publish a new set; an existing
+# models-vN release is never rebuilt, so hashes pinned in older apps stay valid.
+on:
+  push:
+    branches: [main]
+    paths: ['tools/model-conversion/**', '.github/workflows/models.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PACKS_VERSION: '1'
+
+concurrency:
+  group: models
+  cancel-in-progress: false
+
+jobs:
+  packs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Already published?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "models-v$PACKS_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "models-v$PACKS_VERSION exists; nothing to build."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.skip != 'true'
+        with:
+          python-version: '3.12'
+
+      - name: Install converters
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r tools/model-conversion/requirements.txt
+
+      - name: Cache upstream weights
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/packwork/*.pth
+            ~/packwork/*.zip
+          key: packwork-${{ hashFiles('tools/model-conversion/build_packs.py') }}
+
+      - name: Build packs
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          python tools/model-conversion/build_packs.py --work ~/packwork --out dist \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/models-v${PACKS_VERSION}"
+          ls -la dist
+
+      - name: Publish release
+        if: steps.check.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: models-v${{ env.PACKS_VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: Model packs v${{ env.PACKS_VERSION }}
+          prerelease: true
+          make_latest: false
+          body: |
+            Optional model packs for Rescale. The app downloads these itself (Menu → Model packs);
+            you only need them here to **import** a pack on a phone without internet.
+
+            | File | Adds |
+            |---|---|
+            | rescale-pack-jpeg.zip | De-JPEG stage (FBCNN, Apache-2.0) |
+            | rescale-pack-denoise.zip | Denoise stage (Real-ESRGAN general + wdn, BSD-3-Clause) |
+            | rescale-pack-photo-pro.zip | Pro photo upscaler (Real-ESRGAN x4plus, BSD-3-Clause) |
+            | rescale-pack-anime-pro.zip | Pro anime upscaler (Real-ESRGAN x4plus anime 6B, BSD-3-Clause) |
+
+            Checksums are in packs.json and built into the app.
+          files: |
+            dist/*.zip
+            dist/packs.json
+
+      - name: Commit manifest into the app
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          cp dist/packs.json app/src/main/assets/models/packs.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/assets/models/packs.json
+          if git diff --cached --quiet; then echo "manifest unchanged"; exit 0; fi
+          git commit -m "Model packs v${PACKS_VERSION}: pin checksums in the app manifest"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && break
+            sleep 5
+          done

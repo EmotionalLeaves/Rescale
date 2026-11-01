@@ -2,6 +2,7 @@ package app.rescale.ui
 
 import android.Manifest
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,7 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.rescale.RescaleViewModel
 import app.rescale.worker.JobState
 
-private enum class Screen { Home, Editor, Running, Result }
+private enum class Screen { Home, Editor, Running, Result, Models }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,6 +47,11 @@ fun RescaleApp(vm: RescaleViewModel) {
     val snackbar = remember { SnackbarHostState() }
     var menuOpen by remember { mutableStateOf(false) }
     var dialog by rememberSaveable { mutableStateOf<String?>(null) }
+    var showModels by rememberSaveable { mutableStateOf(false) }
+    val packs by vm.packs.collectAsStateWithLifecycle()
+    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importPack(uri)
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) vm.pick(uri)
@@ -58,7 +64,10 @@ fun RescaleApp(vm: RescaleViewModel) {
         if (Build.VERSION.SDK_INT >= 33) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.start()
     }
 
+    BackHandler(enabled = showModels) { showModels = false }
+
     val screen = when {
+        showModels -> Screen.Models
         job is JobState.Running -> Screen.Running
         job is JobState.Done && !state.resultDismissed -> Screen.Result
         state.input != null -> Screen.Editor
@@ -75,9 +84,13 @@ fun RescaleApp(vm: RescaleViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Rescale") },
+                title = { Text(if (screen == Screen.Models) "Model packs" else "Rescale") },
                 navigationIcon = {
-                    if (screen == Screen.Editor) {
+                    if (screen == Screen.Models) {
+                        IconButton(onClick = { showModels = false }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close model packs")
+                        }
+                    } else if (screen == Screen.Editor) {
                         IconButton(onClick = vm::newImage) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to start")
                         }
@@ -97,6 +110,9 @@ fun RescaleApp(vm: RescaleViewModel) {
                             trailingIcon = { Checkbox(checked = state.forceCpu, onCheckedChange = null) },
                             onClick = { vm.setForceCpu(!state.forceCpu) },
                         )
+                        DropdownMenuItem(text = { Text("Model packs") }, onClick = {
+                            menuOpen = false; showModels = true
+                        })
                         DropdownMenuItem(text = { Text("Model licenses") }, onClick = {
                             menuOpen = false; dialog = "licenses"
                         })
@@ -126,10 +142,21 @@ fun RescaleApp(vm: RescaleViewModel) {
                     onDetail = vm::setDetail,
                     onColorFix = vm::setColorFix,
                     onLumaOnly = vm::setLumaOnly,
+                    onToggleStage = vm::toggleStage,
+                    onPro = vm::setPro,
+                    onOpenModels = { showModels = true },
                     onStart = start,
                     onDismissError = vm::dismissError,
                 )
                 Screen.Running -> RunningScreen(job as JobState.Running, state.input?.thumbnail, vm::cancel)
+                Screen.Models -> ModelsScreen(
+                    packs = packs,
+                    published = vm.packsPublished,
+                    onDownload = vm::downloadPack,
+                    onCancel = vm::cancelDownload,
+                    onDelete = vm::deletePack,
+                    onImport = { importer.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                )
                 Screen.Result -> ResultScreen(
                     done = job as JobState.Done,
                     before = state.before,

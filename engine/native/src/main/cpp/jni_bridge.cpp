@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+#include "core/chain.h"
 #include "core/engine.h"
 #include "core/sinks.h"
 #include "ncnn_runner.h"
@@ -91,16 +92,56 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeProbe(JNIEnv* env, jobje
     return arr;
 }
 
+JNIEXPORT void JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeSetExtraInput(JNIEnv* env, jobject, jlong handle, jstring blob,
+                                                                      jfloatArray values) {
+    if (!handle) return;
+    std::vector<float> v(env->GetArrayLength(values));
+    env->GetFloatArrayRegion(values, 0, static_cast<jsize>(v.size()), v.data());
+    from(handle)->runner->setExtraInput(str(env, blob), std::move(v));
+}
+
+JNIEXPORT void JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeSetAlignment(JNIEnv*, jobject, jlong handle, jint align) {
+    if (handle) from(handle)->runner->setAlignment(align);
+}
+
+// Runs a chain of passes. Arrays are parallel, one entry per pass. The first handle's
+// cancel flag cancels the whole chain.
 JNIEXPORT jint JNICALL
-Java_app_rescale_engine_nativebridge_NativeEngine_nativeUpscale(JNIEnv* env, jobject, jlong handle, jobject bitmap,
-                                                                jint orientation, jint tile, jint downsample,
-                                                                jfloat detail, jboolean lumaOnly, jboolean colorFix,
-                                                                jlong maxBandBytes, jstring outPath,
-                                                                jstring previewPath, jint previewMax,
-                                                                jobject listener) {
-    if (!handle) return kModelError;
-    Handle* h = from(handle);
-    h->cancel = false;
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeRunChain(
+    JNIEnv* env, jobject, jlongArray jHandles, jintArray jTiles, jintArray jPads, jintArray jDownsamples,
+    jfloatArray jDetails, jbooleanArray jLuma, jbooleanArray jColorFix, jobject bitmap, jint orientation,
+    jlong maxBandBytes, jstring tmpDir, jstring outPath, jstring previewPath, jint previewMax, jobject listener) {
+    const jsize n = env->GetArrayLength(jHandles);
+    if (n <= 0) return kModelError;
+    std::vector<jlong> handles(n);
+    std::vector<jint> tiles(n), pads(n), downs(n);
+    std::vector<jfloat> details(n);
+    std::vector<jboolean> luma(n), cfix(n);
+    env->GetLongArrayRegion(jHandles, 0, n, handles.data());
+    env->GetIntArrayRegion(jTiles, 0, n, tiles.data());
+    env->GetIntArrayRegion(jPads, 0, n, pads.data());
+    env->GetIntArrayRegion(jDownsamples, 0, n, downs.data());
+    env->GetFloatArrayRegion(jDetails, 0, n, details.data());
+    env->GetBooleanArrayRegion(jLuma, 0, n, luma.data());
+    env->GetBooleanArrayRegion(jColorFix, 0, n, cfix.data());
+    for (jlong h : handles)
+        if (!h) return kModelError;
+    Handle* first = from(handles[0]);
+    first->cancel = false;
+
+    std::vector<PassSpec> passes(n);
+    for (jsize i = 0; i < n; ++i) {
+        passes[i].runner = from(handles[i])->runner.get();
+        passes[i].opt.tile = std::max(32, static_cast<int>(tiles[i]));
+        passes[i].opt.pad = std::max(4, static_cast<int>(pads[i]));
+        passes[i].opt.overlap = std::max(16, passes[i].opt.pad);
+        passes[i].opt.post.detail = details[i];
+        passes[i].opt.post.lumaOnly = luma[i];
+        passes[i].opt.post.colorFix = cfix[i];
+        passes[i].downsample = std::max(1, static_cast<int>(downs[i]));
+    }
 
     AndroidBitmapInfo info;
     if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
@@ -109,70 +150,44 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeUpscale(JNIEnv* env, job
     void* pixels = nullptr;
     if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS) return kBadInput;
 
-    Status st;
+    ChainResult res;
     {
         Image img(static_cast<const uint8_t*>(pixels), static_cast<int>(info.width), static_cast<int>(info.height),
                   static_cast<int>(info.stride), orientation);
-        const int s = h->runner->scale();
-        const int ds = std::max(1, static_cast<int>(downsample));
-        const int C = outputChannels(img);
-        const int OW = img.width() * s, OH = img.height() * s;
-
-        EngineOptions opt;
-        opt.tile = std::max(32, static_cast<int>(tile));
-        opt.post.detail = detail;
-        opt.post.lumaOnly = lumaOnly;
-        opt.post.colorFix = colorFix;
-        // Band accumulator is OW * tile*s rows * 3 floats. Shrink the tile until it fits.
-        while (opt.tile > 32 && static_cast<long long>(OW) * opt.tile * s * 12 > maxBandBytes) opt.tile -= 16;
-
-        BoxDownsample tmpProbe(OW, OH, C, ds, nullptr);  // only for output size
-        const int FW = tmpProbe.outWidth(), FH = tmpProbe.outHeight();
-
-        PngWriter main(str(env, outPath), FW, FH, C);
-        if (!main.ok()) {
-            AndroidBitmap_unlockPixels(env, bitmap);
-            return kWriteError;
-        }
-        const std::string prevPath = str(env, previewPath);
+        const std::string out = str(env, outPath), prevPath = str(env, previewPath);
         const int pmax = std::max(1, static_cast<int>(previewMax));
-        const int pk = std::max(1, (std::max(FW, FH) + pmax - 1) / pmax);
-        std::unique_ptr<PngWriter> prevPng;
+        std::unique_ptr<PngWriter> main, prevPng;
         std::unique_ptr<BoxDownsample> prevDown;
-        RowSink* previewSink = nullptr;
-        if (!prevPath.empty()) {
-            prevPng = std::make_unique<PngWriter>(prevPath, (FW + pk - 1) / pk, (FH + pk - 1) / pk, C, 3);
-            prevDown = std::make_unique<BoxDownsample>(FW, FH, C, pk, prevPng.get());
-            previewSink = prevDown.get();
-        }
-        Tee tee(&main, previewSink);
-        std::unique_ptr<BoxDownsample> down;
-        RowSink* sink = &tee;
-        if (ds > 1) {
-            down = std::make_unique<BoxDownsample>(OW, OH, C, ds, &tee);
-            sink = down.get();
-        }
+        std::unique_ptr<Tee> tee;
+        FinalSinkFactory makeFinal = [&](int fw, int fh, int c) -> RowSink* {
+            main = std::make_unique<PngWriter>(out, fw, fh, c);
+            if (!main->ok()) return nullptr;
+            RowSink* previewSink = nullptr;
+            if (!prevPath.empty()) {
+                const int pk = std::max(1, (std::max(fw, fh) + pmax - 1) / pmax);
+                prevPng = std::make_unique<PngWriter>(prevPath, (fw + pk - 1) / pk, (fh + pk - 1) / pk, c, 3);
+                prevDown = std::make_unique<BoxDownsample>(fw, fh, c, pk, prevPng.get());
+                previewSink = prevDown.get();
+            }
+            tee = std::make_unique<Tee>(main.get(), previewSink);
+            return tee.get();
+        };
 
         jmethodID onProgress = nullptr;
-        if (listener) {
-            jclass cls = env->GetObjectClass(listener);
-            onProgress = env->GetMethodID(cls, "onProgress", "(II)V");
-        }
+        if (listener) onProgress = env->GetMethodID(env->GetObjectClass(listener), "onProgress", "(II)V");
         auto progress = [&](int done, int total) {
-            if (onProgress) {
-                env->CallVoidMethod(listener, onProgress, done, total);
-                if (env->ExceptionCheck()) {
-                    env->ExceptionClear();
-                    h->cancel = true;
-                }
+            if (!onProgress) return;
+            env->CallVoidMethod(listener, onProgress, done, total);
+            if (env->ExceptionCheck()) {
+                env->ExceptionClear();
+                first->cancel = true;
             }
         };
-        LOGI("upscale %dx%d x%d /%d tile=%d gpu=%d", img.width(), img.height(), s, ds, opt.tile,
-             h->runner->usingGpu());
-        st = upscale(img, *h->runner, opt, *sink, progress, &h->cancel);
+        LOGI("chain of %d pass(es) on %dx%d", static_cast<int>(n), img.width(), img.height());
+        res = runChain(img, passes, str(env, tmpDir), maxBandBytes, makeFinal, progress, &first->cancel);
     }
     AndroidBitmap_unlockPixels(env, bitmap);
-    return st;
+    return res.status;
 }
 
 }  // extern "C"

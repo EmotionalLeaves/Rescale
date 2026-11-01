@@ -36,6 +36,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import app.rescale.core.model.Stage
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.foundation.selection.toggleable
@@ -132,6 +136,9 @@ fun EditorScreen(
     onDetail: (Float) -> Unit,
     onColorFix: (Boolean) -> Unit,
     onLumaOnly: (Boolean) -> Unit,
+    onToggleStage: (Stage) -> Unit,
+    onPro: (Boolean) -> Unit,
+    onOpenModels: () -> Unit,
     onStart: () -> Unit,
     onDismissError: () -> Unit,
 ) {
@@ -173,7 +180,7 @@ fun EditorScreen(
                 ) { Text(m.label) }
             }
         }
-        input.autoPlan?.let { plan ->
+        state.autoPlan?.let { plan ->
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                 Column(Modifier.padding(12.dp)) {
                     Text(plan.description, style = MaterialTheme.typography.bodyMedium)
@@ -199,6 +206,8 @@ fun EditorScreen(
                 ) { Text("$s×") }
             }
         }
+
+        RestorationControls(state, onToggleStage, onPro, onOpenModels)
 
         DetailControls(state, onDetail, onColorFix, onLumaOnly)
 
@@ -247,6 +256,43 @@ fun EditorScreen(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RestorationControls(
+    state: EditorState,
+    onToggleStage: (Stage) -> Unit,
+    onPro: (Boolean) -> Unit,
+    onOpenModels: () -> Unit,
+) {
+    Column {
+        Text("Restoration", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(4.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Stage.entries.forEach { stage ->
+                val available = stage.packId in state.installedPacks
+                val usable = available && !(stage == Stage.DENOISE && state.mode != Mode.PHOTO)
+                FilterChip(
+                    selected = usable && stage in state.stages,
+                    onClick = { if (available) onToggleStage(stage) else onOpenModels() },
+                    enabled = usable || !available,
+                    label = { Text(if (available) stage.label else "${stage.label} · get pack") },
+                    leadingIcon = if (!available) {
+                        { Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                    } else null,
+                )
+            }
+        }
+        if (state.proAvailable) {
+            ToggleRow(
+                "Pro model",
+                "Larger model with stronger texture; several times slower",
+                state.pro,
+                onPro,
+            )
+        }
     }
 }
 

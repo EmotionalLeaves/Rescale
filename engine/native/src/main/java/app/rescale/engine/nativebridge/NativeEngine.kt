@@ -39,26 +39,13 @@ object NativeEngine {
 
         fun probe(): FloatArray? = nativeProbe(handle)
 
-        /**
-         * Upscale [bitmap] (RGBA_8888, ideally not premultiplied) and stream a PNG to
-         * [outPath]. A small preview PNG (long side <= [previewMax]) is written alongside.
-         */
-        fun upscale(
-            bitmap: Bitmap,
-            exifOrientation: Int,
-            tile: Int,
-            downsample: Int,
-            post: PostOptions,
-            maxBandBytes: Long,
-            outPath: String,
-            previewPath: String?,
-            previewMax: Int,
-            listener: ProgressListener?,
-        ): Int = nativeUpscale(
-            handle, bitmap, exifOrientation, tile, downsample,
-            post.detail, post.lumaOnly, post.colorFix, maxBandBytes,
-            outPath, previewPath, previewMax, listener,
-        )
+        /** Feed [values] to the model's second input [blob] on every tile. */
+        fun setExtraInput(blob: String, values: FloatArray) = nativeSetExtraInput(handle, blob, values)
+
+        /** Pad tiles to a multiple of [align] inside the runner. */
+        fun setAlignment(align: Int) = nativeSetAlignment(handle, align)
+
+        internal val rawHandle: Long get() = handle
 
         fun cancel() = nativeCancel(handle)
 
@@ -67,6 +54,41 @@ object NativeEngine {
             handle = 0L
         }
     }
+
+    /** One pass of a chain: run [session], then area-downsample by [downsample]. */
+    class Pass(
+        val session: Session,
+        val tile: Int,
+        val pad: Int,
+        val downsample: Int,
+        val post: PostOptions,
+    )
+
+    /**
+     * Runs [passes] in order on [bitmap] (RGBA_8888, ideally not premultiplied) and streams the
+     * final PNG to [outPath], plus a preview (long side <= [previewMax]). Intermediates go to
+     * [tmpDir]. Cancel with the first pass's session.
+     */
+    fun runChain(
+        passes: List<Pass>,
+        bitmap: Bitmap,
+        exifOrientation: Int,
+        maxBandBytes: Long,
+        tmpDir: String,
+        outPath: String,
+        previewPath: String?,
+        previewMax: Int,
+        listener: ProgressListener?,
+    ): Int = nativeRunChain(
+        passes.map { it.session.rawHandle }.toLongArray(),
+        passes.map { it.tile }.toIntArray(),
+        passes.map { it.pad }.toIntArray(),
+        passes.map { it.downsample }.toIntArray(),
+        passes.map { it.post.detail }.toFloatArray(),
+        passes.map { it.post.lumaOnly }.toBooleanArray(),
+        passes.map { it.post.colorFix }.toBooleanArray(),
+        bitmap, exifOrientation, maxBandBytes, tmpDir, outPath, previewPath, previewMax, listener,
+    )
 
     /** Returns null if the model files can't be loaded. */
     fun open(
@@ -90,9 +112,12 @@ object NativeEngine {
     @JvmStatic private external fun nativeDestroy(handle: Long)
     @JvmStatic private external fun nativeCancel(handle: Long)
     @JvmStatic private external fun nativeProbe(handle: Long): FloatArray?
-    @JvmStatic private external fun nativeUpscale(
-        handle: Long, bitmap: Bitmap, orientation: Int, tile: Int, downsample: Int,
-        detail: Float, lumaOnly: Boolean, colorFix: Boolean, maxBandBytes: Long,
+    @JvmStatic private external fun nativeSetExtraInput(handle: Long, blob: String, values: FloatArray)
+    @JvmStatic private external fun nativeSetAlignment(handle: Long, align: Int)
+    @JvmStatic private external fun nativeRunChain(
+        handles: LongArray, tiles: IntArray, pads: IntArray, downsamples: IntArray,
+        details: FloatArray, lumaOnly: BooleanArray, colorFix: BooleanArray,
+        bitmap: Bitmap, orientation: Int, maxBandBytes: Long, tmpDir: String,
         outPath: String, previewPath: String?, previewMax: Int, listener: ProgressListener?,
     ): Int
 }

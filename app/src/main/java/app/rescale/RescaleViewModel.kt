@@ -16,12 +16,18 @@ import androidx.lifecycle.viewModelScope
 import app.rescale.core.model.Limits
 import app.rescale.core.model.Mode
 import app.rescale.core.model.OutputEstimate
+import app.rescale.core.model.Analysis
 import app.rescale.core.model.AutoPlan
 import app.rescale.core.model.AutoPlanner
 import app.rescale.core.model.JobSettings
 import app.rescale.core.model.Stage
 import app.rescale.core.model.Tuning
 import app.rescale.engine.pipeline.ImageAnalyzer
+import app.rescale.engine.pipeline.PackStore
+import app.rescale.core.model.Packs
+import app.rescale.worker.PackDownload
+import app.rescale.worker.PackDownloadWorker
+import kotlinx.coroutines.flow.combine
 import app.rescale.engine.pipeline.BackendSelector
 import app.rescale.engine.pipeline.ImageInfo
 import app.rescale.engine.pipeline.ImageLoader
@@ -45,7 +51,7 @@ data class InputState(
     val uri: Uri,
     val info: ImageInfo,
     val thumbnail: Bitmap?,
-    val autoPlan: AutoPlan? = null,
+    val analysis: Analysis? = null,
 )
 
 data class EditorState(
@@ -57,6 +63,10 @@ data class EditorState(
     val stages: List<Stage> = emptyList(),
     /** True while the settings are the ones Auto picked. */
     val auto: Boolean = true,
+    val pro: Boolean = false,
+    val jpegQuality: Int = 50,
+    val strongDenoise: Boolean = false,
+    val installedPacks: Set<String> = emptySet(),
     val error: String? = null,
     val resultDismissed: Boolean = false,
     val before: Bitmap? = null,
@@ -65,23 +75,85 @@ data class EditorState(
     val forceCpu: Boolean = false,
 ) {
     val estimate: OutputEstimate? get() = input?.let { OutputEstimate.of(it.info.width, it.info.height, scale) }
+    /** What Auto would pick now (re-evaluated when packs are installed). */
+    val autoPlan: AutoPlan?
+        get() = input?.analysis?.let { a ->
+            AutoPlanner.plan(a, Stage.entries.filter { it.packId in installedPacks }.toSet())
+        }
+    val settings: JobSettings
+        get() = JobSettings(mode, scale, tuning, stages, pro, jpegQuality, strongDenoise)
+    val proAvailable: Boolean
+        get() = (if (mode == Mode.PHOTO) Packs.PHOTO_PRO else Packs.ANIME_PRO) in installedPacks
     val tooLarge: Boolean get() = input?.let { it.info.width.toLong() * it.info.height > Limits.MAX_INPUT_PIXELS } ?: false
 }
 
-private fun EditorState.applying(s: JobSettings) =
-    copy(mode = s.mode, scale = s.scale, tuning = s.tuning, stages = s.stages, auto = true)
+private fun EditorState.applying(s: JobSettings) = copy(
+    mode = s.mode, scale = s.scale, tuning = s.tuning, stages = s.stages, auto = true,
+    jpegQuality = s.jpegQuality, strongDenoise = s.strongDenoise,
+)
+
+data class PackUi(val info: Packs.Info, val installed: Boolean, val sizeBytes: Long, val download: PackDownload)
 
 class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx get() = getApplication<Application>()
     private val backends = BackendSelector(app, BuildConfig.VERSION_CODE.toLong())
 
-    private val _state = MutableStateFlow(EditorState(forceCpu = backends.forceCpu))
+    private val packStore = PackStore(app)
+    private val _state = MutableStateFlow(EditorState(forceCpu = backends.forceCpu, installedPacks = packStore.installed()))
     val state: StateFlow<EditorState> = _state.asStateFlow()
 
     val job: StateFlow<JobState> = UpscaleWorker.observe(app)
         .stateIn(viewModelScope, SharingStarted.Eagerly, JobState.Idle)
 
     private var loadedResultFor: File? = null
+
+    /** Pack rows for the Models screen; refreshes installed state when downloads finish. */
+    val packs: StateFlow<List<PackUi>> = combine(Packs.all.map { info ->
+        PackDownloadWorker.observe(app, info.id)
+    }) { downloads ->
+        refreshInstalled()
+        Packs.all.mapIndexed { i, info ->
+            PackUi(info, packStore.isInstalled(info.id),
+                packStore.manifest[info.id]?.size ?: 0L, downloads[i])
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val packsPublished: Boolean get() = packStore.manifest.isNotEmpty()
+
+    private fun refreshInstalled() {
+        val installed = packStore.installed()
+        _state.update { s ->
+            // Drop stages/pro whose pack disappeared.
+            val next = s.copy(installedPacks = installed, stages = s.stages.filter { it.packId in installed })
+            // New packs can change what Auto would do.
+            val plan = next.autoPlan
+            if (next.auto && plan != null && installed != s.installedPacks) next.applying(plan.settings) else next
+        }
+    }
+
+    fun downloadPack(id: String) = PackDownloadWorker.start(ctx, id)
+    fun cancelDownload(id: String) = PackDownloadWorker.cancel(ctx, id)
+    fun deletePack(id: String) {
+        packStore.delete(id)
+        refreshInstalled()
+    }
+
+    fun importPack(uri: Uri) {
+        viewModelScope.launch {
+            val msg = withContext(Dispatchers.IO) {
+                runCatching {
+                    ctx.contentResolver.openInputStream(uri)?.use { packStore.installZip(it) } ?: error("Can't open file")
+                }.fold(
+                    onSuccess = { id -> "Installed ${Packs.all.find { it.id == id }?.name ?: id}" },
+                    onFailure = { it.message ?: "Import failed" },
+                )
+            }
+            refreshInstalled()
+            _state.update { it.copy(message = msg) }
+        }
+    }
+
+    fun setPro(v: Boolean) = _state.update { it.copy(pro = v, auto = false) }
 
     init {
         viewModelScope.launch {
@@ -101,14 +173,15 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
                         ?: error("Can't open this image")
                     val local = Uri.fromFile(copy)
                     val info = ImageLoader.info(ctx, local)
-                    val plan = ImageAnalyzer.analyze(ctx, local, info)?.let { AutoPlanner.plan(it, availableStages()) }
-                    InputState(local, info, ImageLoader.decodePreview(ctx, local, 1600), plan)
+                    val analysis = ImageAnalyzer.analyze(ctx, local, info)
+                    InputState(local, info, ImageLoader.decodePreview(ctx, local, 1600), analysis)
                 }
             }
             result.onSuccess { input ->
                 _state.update {
                     val base = it.copy(input = input, loadingInput = false, resultDismissed = true, after = null, before = null)
-                    if (it.auto && input.autoPlan != null) base.applying(input.autoPlan.settings) else base
+                    val plan = base.autoPlan
+                    if (it.auto && plan != null) base.applying(plan.settings) else base
                 }
                 UpscaleWorker.clear(ctx)
                 loadedResultFor = null
@@ -125,7 +198,7 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Re-applies what Auto picked for the current image. */
     fun useAuto() = _state.update { s ->
-        val plan = s.input?.autoPlan ?: return@update s.copy(auto = true)
+        val plan = s.autoPlan ?: return@update s.copy(auto = true)
         s.applying(plan.settings)
     }
 
@@ -133,8 +206,7 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
         it.copy(stages = if (stage in it.stages) it.stages - stage else (it.stages + stage).sortedBy { s -> s.ordinal })
     }
 
-    /** Restoration stages whose models are installed (filled in by the model manager). */
-    private fun availableStages(): Set<Stage> = emptySet()
+
     fun setDetail(v: Float) = _state.update { it.copy(tuning = it.tuning.copy(detail = v.coerceIn(0f, 1f))) }
     fun setColorFix(v: Boolean) = _state.update { it.copy(tuning = it.tuning.copy(colorFix = v)) }
     fun setLumaOnly(v: Boolean) = _state.update { it.copy(tuning = it.tuning.copy(lumaOnly = v)) }
@@ -154,7 +226,7 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
         if (s.tooLarge) return
         _state.update { it.copy(resultDismissed = false, after = null, error = null) }
         loadedResultFor = null
-        UpscaleWorker.enqueue(ctx, input.uri, s.mode, s.scale, s.tuning)
+        UpscaleWorker.enqueue(ctx, input.uri, s.settings)
     }
 
     fun cancel() = UpscaleWorker.cancel(ctx)
@@ -165,7 +237,7 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     fun newImage() {
         UpscaleWorker.clear(ctx)
         loadedResultFor = null
-        _state.update { EditorState(forceCpu = it.forceCpu) }
+        _state.update { EditorState(forceCpu = it.forceCpu, installedPacks = it.installedPacks) }
     }
 
     private suspend fun loadResult(done: JobState.Done) {

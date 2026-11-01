@@ -29,6 +29,36 @@ class PlannerTest {
         Planner.plan(Mode.PHOTO, 3)
     }
 
+    @Test fun deJpegPassRunsFirstWithQualityInput() {
+        val s = JobSettings(Mode.PHOTO, 4, Tuning.defaultFor(Mode.PHOTO), listOf(Stage.DE_JPEG), jpegQuality = 20)
+        val p = Planner.plan(s, setOf(Packs.JPEG))
+        assertEquals(2, p.passes.size)
+        assertEquals(PackModels.FBCNN, p.passes[0].model)
+        assertEquals(0.8f, p.passes[0].extra!![0], 1e-6f)
+        assertEquals(Tuning.NEUTRAL, p.passes[0].tuning)
+        assertEquals(BundledModels.GENERAL_X4V3, p.model)
+        assertEquals(4, p.outputScale)
+    }
+
+    @Test fun missingPacksAreSkipped() {
+        val s = JobSettings(Mode.PHOTO, 2, Tuning.defaultFor(Mode.PHOTO), listOf(Stage.DE_JPEG, Stage.DENOISE), pro = true)
+        val p = Planner.plan(s, emptySet())
+        assertEquals(1, p.passes.size)
+        assertEquals(BundledModels.GENERAL_X4V3, p.model)
+        assertEquals(2, p.outputScale)
+    }
+
+    @Test fun denoiseAndProSwapTheUpscaler() {
+        val base = JobSettings(Mode.PHOTO, 4, Tuning.defaultFor(Mode.PHOTO))
+        val all = setOf(Packs.DENOISE, Packs.PHOTO_PRO, Packs.ANIME_PRO)
+        assertEquals(PackModels.DENOISE_50, Planner.plan(base.copy(stages = listOf(Stage.DENOISE)), all).model)
+        assertEquals(PackModels.DENOISE_100, Planner.plan(base.copy(stages = listOf(Stage.DENOISE), strongDenoise = true), all).model)
+        assertEquals(PackModels.X4PLUS, Planner.plan(base.copy(pro = true), all).model)
+        val anime = Planner.plan(JobSettings(Mode.ANIME, 2, Tuning.defaultFor(Mode.ANIME), pro = true), all)
+        assertEquals(PackModels.X4PLUS_ANIME, anime.model)
+        assertEquals(2, anime.downsample)
+    }
+
     @Test fun estimate() {
         val e = OutputEstimate.of(1000, 500, 4)
         assertEquals(4000L, e.width)

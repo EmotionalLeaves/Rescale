@@ -1,19 +1,5 @@
 package app.rescale.core.model
 
-/** Optional restoration stages that run before the upscale. */
-enum class Stage(val label: String) {
-    DE_JPEG("De-JPEG"),
-    DENOISE("Denoise"),
-}
-
-/** Everything a job needs beyond the input. */
-data class JobSettings(
-    val mode: Mode,
-    val scale: Int,
-    val tuning: Tuning,
-    val stages: List<Stage> = emptyList(),
-)
-
 data class AutoPlan(val settings: JobSettings, val description: String) {
     /** "De-JPEG → Upscale 4× (Photo)". */
     val chips: List<String>
@@ -44,6 +30,13 @@ object AutoPlanner {
             if (a.noisy && Stage.DENOISE !in stages) detail = minOf(detail, 0.6f)
         }
         val tuning = Tuning(detail = detail, colorFix = true, lumaOnly = a.grayscale)
-        return AutoPlan(JobSettings(mode, scale, tuning, stages), a.describe())
+        // Header quality when it's a JPEG; otherwise guess from how blocky it looks.
+        val quality = a.jpegQuality ?: if (a.heavyJpeg) 25 else 50
+        val settings = JobSettings(
+            mode, scale, tuning, stages,
+            jpegQuality = quality,
+            strongDenoise = a.noiseSigma > 12f,
+        )
+        return AutoPlan(settings, a.describe())
     }
 }

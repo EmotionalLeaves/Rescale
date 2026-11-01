@@ -1,5 +1,6 @@
 #include "ncnn_runner.h"
 
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 
@@ -41,23 +42,45 @@ bool NcnnRunner::load(const std::string& paramPath, const std::string& binPath) 
 }
 
 bool NcnnRunner::run(const std::vector<float>& in, int w, int h, std::vector<float>& out) {
-    ncnn::Mat m(w, h, 3);
+    const int pw = (w + align_ - 1) / align_ * align_;
+    const int ph = (h + align_ - 1) / align_ * align_;
+    ncnn::Mat m(pw, ph, 3);
     const size_t plane = static_cast<size_t>(w) * h;
-    for (int c = 0; c < 3; ++c) std::memcpy(m.channel(c), in.data() + c * plane, plane * sizeof(float));
+    for (int c = 0; c < 3; ++c) {
+        float* dst = m.channel(c);
+        const float* src = in.data() + c * plane;
+        for (int y = 0; y < ph; ++y) {
+            const float* row = src + static_cast<size_t>(std::min(y, h - 1)) * w;
+            float* d = dst + static_cast<size_t>(y) * pw;
+            std::memcpy(d, row, w * sizeof(float));
+            for (int x = w; x < pw; ++x) d[x] = row[w - 1];
+        }
+    }
 
     ncnn::Extractor ex = net_.create_extractor();
     if (ex.input(inBlob_.c_str(), m) != 0) return false;
+    if (!extraBlob_.empty()) {
+        ncnn::Mat e(static_cast<int>(extraValues_.size()));
+        std::memcpy(e.data, extraValues_.data(), extraValues_.size() * sizeof(float));
+        if (ex.input(extraBlob_.c_str(), e) != 0) return false;
+    }
     ncnn::Mat r;
     if (ex.extract(outBlob_.c_str(), r) != 0) return false;
-    if (r.c != 3 || r.w != w * scale_ || r.h != h * scale_) return false;
+    if (r.c != 3 || r.w != pw * scale_ || r.h != ph * scale_) return false;
     if (r.elemsize != 4) {  // make sure we read fp32
         ncnn::Mat f;
         ncnn::cast_float16_to_float32(r, f);
         r = f;
     }
-    const size_t oplane = static_cast<size_t>(r.w) * r.h;
+    const int ow = w * scale_, oh = h * scale_;
+    const size_t oplane = static_cast<size_t>(ow) * oh;
     out.resize(3 * oplane);
-    for (int c = 0; c < 3; ++c) std::memcpy(out.data() + c * oplane, r.channel(c), oplane * sizeof(float));
+    for (int c = 0; c < 3; ++c) {
+        const float* src = r.channel(c);
+        for (int y = 0; y < oh; ++y)
+            std::memcpy(out.data() + c * oplane + static_cast<size_t>(y) * ow, src + static_cast<size_t>(y) * r.w,
+                        ow * sizeof(float));
+    }
     return true;
 }
 

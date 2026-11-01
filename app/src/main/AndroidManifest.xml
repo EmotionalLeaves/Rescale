@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- No INTERNET permission: Rescale never touches the network. -->
+    <!-- Only used when the user taps Download on an optional model pack. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Only needed to save to Pictures/ on Android 8-9. -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"

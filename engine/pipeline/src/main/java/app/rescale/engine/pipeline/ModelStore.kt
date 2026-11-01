@@ -8,8 +8,14 @@ import java.io.File
  * Bundled models ship in assets/models. ncnn loads from file paths, so on first use they're
  * copied into filesDir/models (a few MB, done once per app version).
  */
-class ModelStore(private val context: Context) {
+class ModelStore(private val context: Context, private val packs: PackStore = PackStore(context)) {
     private val dir = File(context.filesDir, "models").apply { mkdirs() }
+
+    /** Paths of the model's .param/.bin, installing bundled ones on first use. */
+    fun resolve(spec: ModelSpec): Pair<File, File> =
+        if (spec.packId == null) install(spec) else packs.files(spec).also { (p, b) ->
+            if (!p.exists() || !b.exists()) error("The ${spec.packId} pack isn't installed")
+        }
 
     fun install(spec: ModelSpec): Pair<File, File> {
         val param = File(dir, spec.paramFile)

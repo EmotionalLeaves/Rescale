@@ -4,21 +4,16 @@ import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
+import app.rescale.core.model.JobSettings
 import app.rescale.core.model.Limits
-import app.rescale.core.model.Mode
 import app.rescale.core.model.Planner
-import app.rescale.core.model.Tuning
+import app.rescale.engine.nativebridge.NativeEngine
 import app.rescale.engine.nativebridge.NativeStatus
 import app.rescale.engine.nativebridge.PostOptions
 import app.rescale.engine.nativebridge.ProgressListener
 import java.io.File
 
-data class UpscaleRequest(
-    val input: Uri,
-    val mode: Mode,
-    val scale: Int,
-    val tuning: Tuning = Tuning.defaultFor(mode),
-)
+data class UpscaleRequest(val input: Uri, val settings: JobSettings)
 
 sealed interface UpscaleOutcome {
     data class Success(
@@ -28,6 +23,8 @@ sealed interface UpscaleOutcome {
         val height: Int,
         val backend: BackendKind,
         val millis: Long,
+        /** Human summary of what ran, e.g. "De-JPEG → Real-ESRGAN general x4v3". */
+        val pipeline: String,
     ) : UpscaleOutcome
 
     data object Cancelled : UpscaleOutcome
@@ -40,7 +37,8 @@ fun interface Cancellable {
 }
 
 class Upscaler(private val context: Context, appVersion: Long) {
-    private val models = ModelStore(context)
+    val packs = PackStore(context)
+    private val models = ModelStore(context, packs)
     val backends = BackendSelector(context, appVersion)
 
     /**
@@ -62,51 +60,68 @@ class Upscaler(private val context: Context, appVersion: Long) {
             return UpscaleOutcome.Failed("Input is larger than ${Limits.MAX_INPUT_PIXELS / 1_000_000} MP")
         }
 
-        val plan = Planner.plan(req.mode, req.scale)
-        val outW = info.width.toLong() * req.scale
-        val outH = info.height.toLong() * req.scale
-        val needBytes = outW * outH * 3 / 2 + (64L shl 20)
+        val plan = Planner.plan(req.settings, packs.installed())
+        val scale = plan.outputScale
+        val outW = info.width.toLong() * scale
+        val outH = info.height.toLong() * scale
+        // Output PNG plus intermediates of restoration passes (raw RGBA at input size).
+        val needBytes = outW * outH * 3 / 2 + (plan.passes.size - 1) * info.width.toLong() * info.height * 4 + (64L shl 20)
         if (outDir.apply { mkdirs() }.usableSpace < needBytes) {
             return UpscaleOutcome.Failed("Not enough free storage (need about ${needBytes shr 20} MB)")
         }
 
-        val (param, bin) = models.install(plan.model)
-        val session = try {
-            backends.open(plan.model, param, bin)
+        val sessions = mutableListOf<NativeEngine.Session>()
+        val passes = try {
+            plan.passes.map { p ->
+                val (param, bin) = models.resolve(p.model)
+                val s = backends.open(p.model, param, bin, p.extra).also { sessions += it }
+                NativeEngine.Pass(
+                    session = s,
+                    tile = if (s.usingGpu) p.model.tile else minOf(p.model.tile, CPU_TILE),
+                    pad = p.model.pad,
+                    downsample = p.downsample,
+                    post = PostOptions(p.tuning.detail, p.tuning.lumaOnly, p.tuning.colorFix),
+                )
+            }
         } catch (e: Exception) {
+            sessions.forEach { it.close() }
             return UpscaleOutcome.Failed(e.message ?: "Couldn't load the model")
         }
         val bitmap = try {
             ImageLoader.decodeForEngine(context, req.input)
         } catch (e: Throwable) {
-            session.close()
+            sessions.forEach { it.close() }
             return UpscaleOutcome.Failed(if (e is OutOfMemoryError) "Not enough memory to open this image" else e.message ?: "Decode failed")
         }
 
         val output = File(outDir, "output.png")
         val preview = File(outDir, "preview.png")
+        val tmp = File(context.cacheDir, "passes").apply { deleteRecursively(); mkdirs() }
         val started = SystemClock.elapsedRealtime()
-        val backend = if (session.usingGpu) BackendKind.VULKAN else BackendKind.CPU
-        val status = session.use { s ->
-            onStarted { s.cancel() }
-            s.upscale(
+        val backend = if (passes.all { it.session.usingGpu }) BackendKind.VULKAN else BackendKind.CPU
+        val status = try {
+            onStarted { passes.first().session.cancel() }
+            NativeEngine.runChain(
+                passes = passes,
                 bitmap = bitmap,
                 exifOrientation = info.exifOrientation,
-                tile = if (s.usingGpu) GPU_TILE else CPU_TILE,
-                downsample = plan.downsample,
-                post = PostOptions(req.tuning.detail, req.tuning.lumaOnly, req.tuning.colorFix),
                 maxBandBytes = bandBudget(),
+                tmpDir = tmp.path,
                 outPath = output.path,
                 previewPath = preview.path,
                 previewMax = PREVIEW_MAX,
                 listener = ProgressListener { d, t -> onProgress(d, t) },
             )
+        } finally {
+            sessions.forEach { it.close() }
+            bitmap.recycle()
+            tmp.deleteRecursively()
         }
-        bitmap.recycle()
 
         return when (status) {
             NativeStatus.OK -> UpscaleOutcome.Success(
                 output, preview, outW.toInt(), outH.toInt(), backend, SystemClock.elapsedRealtime() - started,
+                plan.passes.joinToString(" → ") { it.model.displayName },
             )
             NativeStatus.CANCELLED -> {
                 output.delete(); preview.delete()
@@ -117,7 +132,7 @@ class Upscaler(private val context: Context, appVersion: Long) {
             else -> {
                 // A model error on GPU usually means a driver problem: don't trust it again.
                 if (backend == BackendKind.VULKAN) backends.forceCpu = true
-                UpscaleOutcome.Failed("The model failed on this device (${backend.name}). Switched to CPU; please retry.")
+                UpscaleOutcome.Failed("The model failed on this device. Switched to CPU; please retry.")
             }
         }
     }
@@ -130,7 +145,6 @@ class Upscaler(private val context: Context, appVersion: Long) {
     }
 
     companion object {
-        const val GPU_TILE = 192
         const val CPU_TILE = 128
         const val PREVIEW_MAX = 2048
     }

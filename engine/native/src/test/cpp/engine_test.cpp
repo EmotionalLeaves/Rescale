@@ -13,6 +13,7 @@
 
 #include <zlib.h>
 
+#include "chain.h"
 #include "engine.h"
 #include "sinks.h"
 #include "tiler.h"
@@ -355,6 +356,58 @@ static void testLumaOnly() {
     }
 }
 
+// Chain: 1× pass then 2× pass then 4× with /2 downsample == nearest 4× of the input.
+static void testChain(const char* dir) {
+    const int w = 70, h = 50;
+    auto px = makeImage(w, h, false);  // constant colour, so nearest chains are exact
+    Image img(px.data(), w, h, w * 4);
+    NearestRunner a(1), b(2), c(4);
+    std::vector<PassSpec> passes(3);
+    passes[0].runner = &a;
+    passes[1].runner = &b;
+    passes[2].runner = &c;
+    passes[2].downsample = 2;
+    for (auto& p : passes) p.opt.tile = 32;
+    std::unique_ptr<MemorySink> mem;
+    int lastDone = 0, lastTotal = 0;
+    auto r = runChain(img, passes, dir, 0,
+                      [&](int fw, int, int ch) { mem = std::make_unique<MemorySink>(fw, ch); return mem.get(); },
+                      [&](int d, int t) { CHECK(d > lastDone); lastDone = d; lastTotal = t; }, nullptr);
+    CHECK(r.status == kOk);
+    CHECK(r.width == w * 4 && r.height == h * 4);
+    CHECK(mem && mem->rows == h * 4);
+    CHECK(lastDone == lastTotal && lastTotal > 0);
+    int worst = 0;
+    for (size_t i = 0; mem && i < mem->data.size(); i += 3)
+        worst = std::max({worst, std::abs(mem->data[i] - 200), std::abs(mem->data[i + 1] - 90),
+                          std::abs(mem->data[i + 2] - 30)});
+    CHECK(worst == 0);
+    // Intermediate files are cleaned up.
+    CHECK(std::fopen((std::string(dir) + "/pass0.rgba").c_str(), "rb") == nullptr);
+    CHECK(std::fopen((std::string(dir) + "/pass1.rgba").c_str(), "rb") == nullptr);
+
+    // Cancel during the second pass.
+    std::atomic<bool> cancel{false};
+    NearestRunner a2(1), b2(2);
+    std::vector<PassSpec> p2(2);
+    p2[0].runner = &a2;
+    p2[1].runner = &b2;
+    for (auto& p : p2) p.opt.tile = 32;
+    const int firstPassTiles = countTiles(w, h, p2[0].opt);
+    auto r2 = runChain(img, p2, dir, 0,
+                       [&](int fw, int, int ch) { mem = std::make_unique<MemorySink>(fw, ch); return mem.get(); },
+                       [&](int d, int) { if (d == firstPassTiles + 1) cancel = true; }, &cancel);
+    CHECK(r2.status == kCancelled);
+    CHECK(std::fopen((std::string(dir) + "/pass0.rgba").c_str(), "rb") == nullptr);
+}
+
+static void testFitTile() {
+    CHECK(fitTile(192, 16000, 4, 0) == 192);
+    const int t = fitTile(192, 16000, 4, 64LL << 20);
+    CHECK(t < 192 && t >= 32);
+    CHECK(16000LL * t * 4 * 12 <= (64LL << 20) || t == 32);
+}
+
 int main(int argc, char** argv) {
     const char* tmp = argc > 1 ? argv[1] : ".";
     testPlanAxis();
@@ -372,6 +425,8 @@ int main(int argc, char** argv) {
     testDetailZeroIsBicubic();
     testColorFix();
     testLumaOnly();
+    testChain(tmp);
+    testFitTile();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

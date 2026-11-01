@@ -4,6 +4,7 @@
 //   rescale_cli <model-base> <in-blob> <out-blob> <scale> <in.rgba> <w> <h> <out.png>
 //               [--orientation N] [--downsample K] [--tile T] [--threads N]
 //               [--detail 0..1] [--luma 0|1] [--colorfix 0|1]
+//               [--dejpeg <fbcnn-model-base> <quality 1..100>]   (1× FBCNN pre-pass)
 //
 // <in.rgba> is raw 8-bit RGBA (see compare_tiling.py, which also prepares it).
 #include <chrono>
@@ -14,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "core/chain.h"
 #include "core/engine.h"
 #include "core/sinks.h"
 #include "ncnn_runner.h"
@@ -30,6 +32,8 @@ int main(int argc, char** argv) {
     const int w = std::atoi(argv[6]), h = std::atoi(argv[7]);
     int orientation = 1, downsample = 1, tile = 128, threads = 4;
     PostOptions post;
+    std::string dejpeg;
+    int quality = 50;
     for (int i = 9; i + 1 < argc; i += 2) {
         if (!std::strcmp(argv[i], "--orientation")) orientation = std::atoi(argv[i + 1]);
         else if (!std::strcmp(argv[i], "--downsample")) downsample = std::atoi(argv[i + 1]);
@@ -38,6 +42,11 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--detail")) post.detail = static_cast<float>(std::atof(argv[i + 1]));
         else if (!std::strcmp(argv[i], "--luma")) post.lumaOnly = std::atoi(argv[i + 1]) != 0;
         else if (!std::strcmp(argv[i], "--colorfix")) post.colorFix = std::atoi(argv[i + 1]) != 0;
+        else if (!std::strcmp(argv[i], "--dejpeg") && i + 2 < argc) {
+            dejpeg = argv[i + 1];
+            quality = std::atoi(argv[i + 2]);
+            ++i;
+        }
     }
 
     std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
@@ -53,22 +62,38 @@ int main(int argc, char** argv) {
         return 1;
     }
     Image img(px.data(), w, h, w * 4, orientation);
-    const int C = outputChannels(img);
-    const int OW = img.width() * scale, OH = img.height() * scale;
-    BoxDownsample probe(OW, OH, C, downsample, nullptr);
-    PngWriter png(argv[8], probe.outWidth(), probe.outHeight(), C);
-    BoxDownsample down(OW, OH, C, downsample, &png);
-    RowSink* sink = downsample > 1 ? static_cast<RowSink*>(&down) : &png;
+    std::vector<PassSpec> passes;
+    std::unique_ptr<NcnnRunner> fb;
+    if (!dejpeg.empty()) {
+        fb = std::make_unique<NcnnRunner>(1, false, threads, "in0", "out0");
+        if (!fb->load(dejpeg + ".param", dejpeg + ".bin")) {
+            std::fprintf(stderr, "can't load %s\n", dejpeg.c_str());
+            return 1;
+        }
+        fb->setExtraInput("in1", {1.0f - quality / 100.0f});
+        fb->setAlignment(8);
+        PassSpec p;
+        p.runner = fb.get();
+        p.opt.tile = 256;
+        p.opt.pad = 32;
+        p.opt.overlap = 32;
+        passes.push_back(p);
+    }
+    PassSpec up;
+    up.runner = &runner;
+    up.opt.tile = tile;
+    up.opt.post = post;
+    up.downsample = downsample;
+    passes.push_back(up);
 
-    EngineOptions opt;
-    opt.tile = tile;
-    opt.post = post;
+    std::unique_ptr<PngWriter> png;
     const auto t0 = std::chrono::steady_clock::now();
-    const Status st = upscale(img, runner, opt, *sink, [](int d, int t) {
-        std::fprintf(stderr, "\rtile %d/%d", d, t);
-    }, nullptr);
+    const ChainResult r = runChain(img, passes, "/tmp", 0,
+        [&](int fw, int fh, int c) { png = std::make_unique<PngWriter>(argv[8], fw, fh, c); return png.get(); },
+        [](int d, int t) { std::fprintf(stderr, "\rtile %d/%d", d, t); }, nullptr);
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    std::fprintf(stderr, "\nstatus=%d  %dx%d -> %dx%d in %.2fs\n", st, img.width(), img.height(),
-                 probe.outWidth(), probe.outHeight(), secs);
+    std::fprintf(stderr, "\nstatus=%d  %dx%d -> %dx%d in %.2fs\n", r.status, img.width(), img.height(), r.width,
+                 r.height, secs);
+    const Status st = r.status;
     return st == kOk ? 0 : 1;
 }
