@@ -1,4 +1,47 @@
 {
-  "version": 0,
-  "packs": []
+  "version": 1,
+  "packs": [
+    {
+      "id": "jpeg",
+      "url": "https://github.com/EmotionalLeaves/Rescale/releases/download/models-v1/rescale-pack-jpeg.zip",
+      "size": 96630973,
+      "sha256": "ffdc2ff617e2db44a5de20f89ebb588405b464a88d41e84e4c9e13aecfd9922c",
+      "files": {
+        "fbcnn-color.bin": "f3b71327b078c18bbc3f987509720f2d9f31bcb2d7163adc97ff26354c612b4b",
+        "fbcnn-color.param": "37fe12cc12eae76c527b78064c6bbc94cb361a5d56110e3153f4c5bc38f1bd6c"
+      }
+    },
+    {
+      "id": "denoise",
+      "url": "https://github.com/EmotionalLeaves/Rescale/releases/download/models-v1/rescale-pack-denoise.zip",
+      "size": 4570361,
+      "sha256": "7fd8a3ede5a563cd63001437becd6e0bf036865de02823c111c4c012a90a0743",
+      "files": {
+        "realesr-general-dn100.bin": "6b821e7d26792b07e1861a6c840683e667e9b2ad825016f7d1340c220f2feb57",
+        "realesr-general-dn100.param": "b41dac5ec6a213cc6983792f5e66b066e906aead0e6eaed9bc4644b281186921",
+        "realesr-general-dn50.bin": "0926770ecaa3ddafc218961890e8ff3e5e8609f4c90f608da83392a00d22c888",
+        "realesr-general-dn50.param": "b41dac5ec6a213cc6983792f5e66b066e906aead0e6eaed9bc4644b281186921"
+      }
+    },
+    {
+      "id": "photo-pro",
+      "url": "https://github.com/EmotionalLeaves/Rescale/releases/download/models-v1/rescale-pack-photo-pro.zip",
+      "size": 30993136,
+      "sha256": "d7819bd7751706e869af4dd10e5f079a514b63bcc3d6e281ed595e0eff47be99",
+      "files": {
+        "realesrgan-x4plus.bin": "713ee713b0353afaa27976f0563a64a5043bd70b9bd8936c2e26e25ebcdbcddf",
+        "realesrgan-x4plus.param": "35330ececcea33b6c397a72548e788d5d53becee4734c50b7fada36e89f10a86"
+      }
+    },
+    {
+      "id": "anime-pro",
+      "url": "https://github.com/EmotionalLeaves/Rescale/releases/download/models-v1/rescale-pack-anime-pro.zip",
+      "size": 8294374,
+      "sha256": "37ca116e71b1ad9d301029f2502d1c49ef8c9bdeeb469cb4bc6ca9869cc9598d",
+      "files": {
+        "realesrgan-x4plus-anime.bin": "fe01c269cfd10cdef8e018ab66ebe750cf79c7af4d1f9c16c737e1295229bacc",
+        "realesrgan-x4plus-anime.param": "2b8fb6e0ae4d2d85704ca08c119a2f5ea40add4f2ecd512eb7f4cd44b6127ed4"
+      }
+    }
+  ]
 }
