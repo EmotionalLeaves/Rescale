@@ -22,6 +22,57 @@ jobs:
           cmake --build build/host -j
           ctest --test-dir build/host --output-on-failure
 
+  quality:
+    name: Quality gates (real model, real engine)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache host ncnn
+        id: ncnn
+        uses: actions/cache@v4
+        with:
+          path: ~/ncnn-host
+          key: ncnn-host-20261020-v1
+
+      - name: Build ncnn for the host (CPU)
+        if: steps.ncnn.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch 20261020 https://github.com/Tencent/ncnn /tmp/ncnn
+          cmake -S /tmp/ncnn -B /tmp/ncnn/build -DCMAKE_BUILD_TYPE=Release -DNCNN_VULKAN=OFF \
+            -DNCNN_BUILD_TOOLS=OFF -DNCNN_BUILD_EXAMPLES=OFF -DNCNN_BUILD_BENCHMARK=OFF -DNCNN_BUILD_TESTS=OFF \
+            -DCMAKE_INSTALL_PREFIX=$HOME/ncnn-host
+          cmake --build /tmp/ncnn/build -j4 && cmake --install /tmp/ncnn/build
+
+      - name: Build the engine CLI
+        run: |
+          cmake -S tools/host-cli -B build/cli -Dncnn_DIR=$HOME/ncnn-host/lib/cmake/ncnn
+          cmake --build build/cli -j4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python deps and reference weights
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy pillow scikit-image
+          curl -sSLo /tmp/realesr-general-x4v3.pth \
+            https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
+
+      - name: Run quality suite
+        run: |
+          python tools/host-cli/quality_suite.py --cli build/cli/rescale_cli \
+            --models app/src/main/assets/models --weights /tmp/realesr-general-x4v3.pth \
+            --out benchmark/results/latest.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quality-results
+          path: benchmark/results/latest.json
+          if-no-files-found: ignore
+
   android:
     name: Unit tests + APK
     runs-on: ubuntu-24.04
@@ -49,7 +100,7 @@ jobs:
       - name: Test & build
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --stacktrace :core:model:test assembleRelease 2>&1 | tee build-output.txt
+          ./gradlew --no-daemon --stacktrace :core:model:test :engine:pipeline:testDebugUnitTest assembleRelease 2>&1 | tee build-output.txt
 
       - name: Report failure on the commit
         if: failure() && github.event_name == 'push'
