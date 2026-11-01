@@ -16,7 +16,12 @@ import androidx.lifecycle.viewModelScope
 import app.rescale.core.model.Limits
 import app.rescale.core.model.Mode
 import app.rescale.core.model.OutputEstimate
+import app.rescale.core.model.AutoPlan
+import app.rescale.core.model.AutoPlanner
+import app.rescale.core.model.JobSettings
+import app.rescale.core.model.Stage
 import app.rescale.core.model.Tuning
+import app.rescale.engine.pipeline.ImageAnalyzer
 import app.rescale.engine.pipeline.BackendSelector
 import app.rescale.engine.pipeline.ImageInfo
 import app.rescale.engine.pipeline.ImageLoader
@@ -40,6 +45,7 @@ data class InputState(
     val uri: Uri,
     val info: ImageInfo,
     val thumbnail: Bitmap?,
+    val autoPlan: AutoPlan? = null,
 )
 
 data class EditorState(
@@ -48,6 +54,9 @@ data class EditorState(
     val mode: Mode = Mode.PHOTO,
     val scale: Int = 4,
     val tuning: Tuning = Tuning.defaultFor(Mode.PHOTO),
+    val stages: List<Stage> = emptyList(),
+    /** True while the settings are the ones Auto picked. */
+    val auto: Boolean = true,
     val error: String? = null,
     val resultDismissed: Boolean = false,
     val before: Bitmap? = null,
@@ -58,6 +67,9 @@ data class EditorState(
     val estimate: OutputEstimate? get() = input?.let { OutputEstimate.of(it.info.width, it.info.height, scale) }
     val tooLarge: Boolean get() = input?.let { it.info.width.toLong() * it.info.height > Limits.MAX_INPUT_PIXELS } ?: false
 }
+
+private fun EditorState.applying(s: JobSettings) =
+    copy(mode = s.mode, scale = s.scale, tuning = s.tuning, stages = s.stages, auto = true)
 
 class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx get() = getApplication<Application>()
@@ -89,12 +101,14 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
                         ?: error("Can't open this image")
                     val local = Uri.fromFile(copy)
                     val info = ImageLoader.info(ctx, local)
-                    InputState(local, info, ImageLoader.decodePreview(ctx, local, 1600))
+                    val plan = ImageAnalyzer.analyze(ctx, local, info)?.let { AutoPlanner.plan(it, availableStages()) }
+                    InputState(local, info, ImageLoader.decodePreview(ctx, local, 1600), plan)
                 }
             }
             result.onSuccess { input ->
                 _state.update {
-                    it.copy(input = input, loadingInput = false, resultDismissed = true, after = null, before = null)
+                    val base = it.copy(input = input, loadingInput = false, resultDismissed = true, after = null, before = null)
+                    if (it.auto && input.autoPlan != null) base.applying(input.autoPlan.settings) else base
                 }
                 UpscaleWorker.clear(ctx)
                 loadedResultFor = null
@@ -106,8 +120,21 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setMode(mode: Mode) = _state.update {
         // Switching mode resets Detail to that mode's default; the toggles stay as set.
-        it.copy(mode = mode, tuning = it.tuning.copy(detail = mode.defaultDetail))
+        it.copy(mode = mode, tuning = it.tuning.copy(detail = mode.defaultDetail), auto = false)
     }
+
+    /** Re-applies what Auto picked for the current image. */
+    fun useAuto() = _state.update { s ->
+        val plan = s.input?.autoPlan ?: return@update s.copy(auto = true)
+        s.applying(plan.settings)
+    }
+
+    fun toggleStage(stage: Stage) = _state.update {
+        it.copy(stages = if (stage in it.stages) it.stages - stage else (it.stages + stage).sortedBy { s -> s.ordinal })
+    }
+
+    /** Restoration stages whose models are installed (filled in by the model manager). */
+    private fun availableStages(): Set<Stage> = emptySet()
     fun setDetail(v: Float) = _state.update { it.copy(tuning = it.tuning.copy(detail = v.coerceIn(0f, 1f))) }
     fun setColorFix(v: Boolean) = _state.update { it.copy(tuning = it.tuning.copy(colorFix = v)) }
     fun setLumaOnly(v: Boolean) = _state.update { it.copy(tuning = it.tuning.copy(lumaOnly = v)) }

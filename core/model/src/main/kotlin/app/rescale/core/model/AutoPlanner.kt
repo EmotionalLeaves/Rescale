@@ -1,0 +1,49 @@
+package app.rescale.core.model
+
+/** Optional restoration stages that run before the upscale. */
+enum class Stage(val label: String) {
+    DE_JPEG("De-JPEG"),
+    DENOISE("Denoise"),
+}
+
+/** Everything a job needs beyond the input. */
+data class JobSettings(
+    val mode: Mode,
+    val scale: Int,
+    val tuning: Tuning,
+    val stages: List<Stage> = emptyList(),
+)
+
+data class AutoPlan(val settings: JobSettings, val description: String) {
+    /** "De-JPEG → Upscale 4× (Photo)". */
+    val chips: List<String>
+        get() = settings.stages.map { it.label } + "Upscale ${settings.scale}× (${settings.mode.label})"
+}
+
+/**
+ * Turns an [Analysis] into settings. [available] is the set of restoration stages whose
+ * models are installed; wanted stages that aren't available are simply skipped.
+ */
+object AutoPlanner {
+    fun plan(a: Analysis, available: Set<Stage> = emptySet()): AutoPlan {
+        val mode = if (a.looksLikeArt) Mode.ANIME else Mode.PHOTO
+        val longSide = maxOf(a.width, a.height)
+        val scale = if (!a.tiny && longSide >= 2000) 2 else 4
+
+        val stages = buildList {
+            if (a.someJpeg) add(Stage.DE_JPEG)
+            if (a.noisy && mode == Mode.PHOTO) add(Stage.DENOISE)
+        }.filter { it in available }
+
+        // Generative detail goes down when the source is damaged: the model would
+        // otherwise sharpen artifacts into fake texture.
+        var detail = mode.defaultDetail
+        if (mode == Mode.PHOTO) {
+            if (a.heavyJpeg && Stage.DE_JPEG !in stages) detail = 0.5f
+            else if (a.someJpeg && Stage.DE_JPEG !in stages) detail = 0.65f
+            if (a.noisy && Stage.DENOISE !in stages) detail = minOf(detail, 0.6f)
+        }
+        val tuning = Tuning(detail = detail, colorFix = true, lumaOnly = a.grayscale)
+        return AutoPlan(JobSettings(mode, scale, tuning, stages), a.describe())
+    }
+}

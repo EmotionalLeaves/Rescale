@@ -127,6 +127,7 @@ fun EditorScreen(
     lastJob: JobState,
     onPick: () -> Unit,
     onMode: (Mode) -> Unit,
+    onAuto: () -> Unit,
     onScale: (Int) -> Unit,
     onDetail: (Float) -> Unit,
     onColorFix: (Boolean) -> Unit,
@@ -157,13 +158,34 @@ fun EditorScreen(
         }
 
         Text("Image type", style = MaterialTheme.typography.titleSmall)
+        val count = Mode.entries.size + 1
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SegmentedButton(
+                selected = state.auto,
+                onClick = onAuto,
+                shape = SegmentedButtonDefaults.itemShape(0, count),
+            ) { Text("Auto") }
             Mode.entries.forEachIndexed { i, m ->
                 SegmentedButton(
-                    selected = state.mode == m,
+                    selected = !state.auto && state.mode == m,
                     onClick = { onMode(m) },
-                    shape = SegmentedButtonDefaults.itemShape(i, Mode.entries.size),
+                    shape = SegmentedButtonDefaults.itemShape(i + 1, count),
                 ) { Text(m.label) }
+            }
+        }
+        input.autoPlan?.let { plan ->
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(plan.description, style = MaterialTheme.typography.bodyMedium)
+                    if (state.auto) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Auto picked: " + plan.chips.joinToString(" → "),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
             }
         }
 

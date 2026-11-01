@@ -121,6 +121,7 @@ fun RescaleApp(vm: RescaleViewModel) {
                     lastJob = job,
                     onPick = pickImage,
                     onMode = vm::setMode,
+                    onAuto = vm::useAuto,
                     onScale = vm::setScale,
                     onDetail = vm::setDetail,
                     onColorFix = vm::setColorFix,

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.0
+
+Auto mode (build-order step 10).
+
+- **Auto** is the default image type. It analyses a full-resolution crop of the image and picks Photo or Anime/Art, the scale, Detail and colour options, then shows what it picked ("Small, heavily compressed photo → Upscale 4× (Photo)")
+- Analysis covers the JPEG quality read from the file's quantisation table, 8×8 blockiness, noise level (Immerkær), sharpness, palette and flatness (art vs photo), and black-and-white detection
+- Damaged photos get a lower Detail so the model doesn't sharpen artifacts into fake texture. Black-and-white images get "Keep original colors"
+- Picking Photo or Anime/Art switches to manual. Tapping Auto restores its choice
+
 ## v0.2.0
 
 Artifact controls (build-order step 9).
