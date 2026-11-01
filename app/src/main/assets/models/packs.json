@@ -42,6 +42,18 @@
         "realesrgan-x4plus-anime.bin": "fe01c269cfd10cdef8e018ab66ebe750cf79c7af4d1f9c16c737e1295229bacc",
         "realesrgan-x4plus-anime.param": "2b8fb6e0ae4d2d85704ca08c119a2f5ea40add4f2ecd512eb7f4cd44b6127ed4"
       }
+    },
+    {
+      "id": "faces",
+      "url": "https://github.com/EmotionalLeaves/Rescale/releases/download/models-v2/rescale-pack-faces.zip",
+      "size": 163705051,
+      "sha256": "1120556c3502eaae1f485aaf6ec69667cb1a845a6055910b87f27f4de32dcd20",
+      "files": {
+        "gfpgan-v1.4.bin": "d999612bda43b6310803ececbb48eb02c68bb7ccce70851f718c1325cb593627",
+        "gfpgan-v1.4.param": "b0ac75f8338191ff6102f708c6ea82d6dd6fc23a48468f069e1107c11cfae6dc",
+        "retinaface-mnet.bin": "6dba2122c5301fb956e5f5a12a576b7c679052a241c9f3d1090e8829a04ca326",
+        "retinaface-mnet.param": "714fbd3b89e714097615e23271fa7da8a6b44609604fa6a094a6cf8ec31f2004"
+      }
     }
   ]
 }
