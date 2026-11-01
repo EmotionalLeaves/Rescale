@@ -4,6 +4,7 @@
 //   rescale_cli <model-base> <in-blob> <out-blob> <scale> <in.rgba> <w> <h> <out.png>
 //               [--orientation N] [--downsample K] [--tile T] [--threads N]
 //               [--detail 0..1] [--luma 0|1] [--colorfix 0|1]
+//               [--repeat K]  (chain the upscaler K times)
 //               [--dejpeg <fbcnn-model-base> <quality 1..100>]   (1× FBCNN pre-pass)
 //
 // <in.rgba> is raw 8-bit RGBA (see compare_tiling.py, which also prepares it).
@@ -33,6 +34,7 @@ int main(int argc, char** argv) {
     int orientation = 1, downsample = 1, tile = 128, threads = 4;
     PostOptions post;
     std::string dejpeg;
+    int repeat = 1;
     int quality = 50;
     for (int i = 9; i + 1 < argc; i += 2) {
         if (!std::strcmp(argv[i], "--orientation")) orientation = std::atoi(argv[i + 1]);
@@ -42,6 +44,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--detail")) post.detail = static_cast<float>(std::atof(argv[i + 1]));
         else if (!std::strcmp(argv[i], "--luma")) post.lumaOnly = std::atoi(argv[i + 1]) != 0;
         else if (!std::strcmp(argv[i], "--colorfix")) post.colorFix = std::atoi(argv[i + 1]) != 0;
+        else if (!std::strcmp(argv[i], "--repeat")) repeat = std::atoi(argv[i + 1]);
         else if (!std::strcmp(argv[i], "--dejpeg") && i + 2 < argc) {
             dejpeg = argv[i + 1];
             quality = std::atoi(argv[i + 2]);
@@ -79,12 +82,19 @@ int main(int argc, char** argv) {
         p.opt.overlap = 32;
         passes.push_back(p);
     }
-    PassSpec up;
-    up.runner = &runner;
-    up.opt.tile = tile;
-    up.opt.post = post;
-    up.downsample = downsample;
-    passes.push_back(up);
+    // --repeat K chains the upscaler K times like the app does for 16×/32× (pre-blur, decaying detail).
+    for (int k = 0; k < repeat; ++k) {
+        PassSpec up;
+        up.runner = &runner;
+        up.opt.tile = tile;
+        up.opt.post = post;
+        if (k > 0) {
+            up.opt.post.preBlur = 0.4f;
+            for (int j = 0; j < k; ++j) up.opt.post.detail *= 0.7f;
+        }
+        up.downsample = k + 1 == repeat ? downsample : 1;
+        passes.push_back(up);
+    }
 
     std::unique_ptr<PngWriter> png;
     const auto t0 = std::chrono::steady_clock::now();

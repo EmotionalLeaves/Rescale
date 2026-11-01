@@ -61,6 +61,12 @@ void blur(float* p, int w, int h, float sigma, std::vector<float>& tmp) {
 
 }  // namespace
 
+void blurPlanes(std::vector<float>& planes, int w, int h, float sigma) {
+    if (sigma <= 0.f) return;
+    std::vector<float> tmp;
+    for (int c = 0; c < 3; ++c) blur(planes.data() + static_cast<size_t>(c) * w * h, w, h, sigma, tmp);
+}
+
 void bicubicUpscale(const std::vector<float>& in, int w, int h, int s, std::vector<float>& out) {
     const int ow = w * s, oh = h * s;
     const auto tx = taps(w, s), ty = taps(h, s);

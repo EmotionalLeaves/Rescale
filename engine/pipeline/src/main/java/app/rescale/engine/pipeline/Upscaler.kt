@@ -64,8 +64,16 @@ class Upscaler(private val context: Context, appVersion: Long) {
         val scale = plan.outputScale
         val outW = info.width.toLong() * scale
         val outH = info.height.toLong() * scale
-        // Output PNG plus intermediates of restoration passes (raw RGBA at input size).
-        val needBytes = outW * outH * 3 / 2 + (plan.passes.size - 1) * info.width.toLong() * info.height * 4 + (64L shl 20)
+        // Output PNG plus raw RGBA intermediates (only the latest two exist at once, but be safe).
+        var w = info.width.toLong()
+        var h = info.height.toLong()
+        var intermediates = 0L
+        plan.passes.dropLast(1).forEach { p ->
+            w = w * p.model.scale / p.downsample
+            h = h * p.model.scale / p.downsample
+            intermediates += w * h * 4
+        }
+        val needBytes = outW * outH * 3 / 2 + intermediates + (64L shl 20)
         if (outDir.apply { mkdirs() }.usableSpace < needBytes) {
             return UpscaleOutcome.Failed("Not enough free storage (need about ${needBytes shr 20} MB)")
         }
@@ -73,14 +81,18 @@ class Upscaler(private val context: Context, appVersion: Long) {
         val sessions = mutableListOf<NativeEngine.Session>()
         val passes = try {
             plan.passes.map { p ->
-                val (param, bin) = models.resolve(p.model)
-                val s = backends.open(p.model, param, bin, p.extra).also { sessions += it }
+                val s = if (p.model.builtin) {
+                    NativeEngine.openBicubic(p.model.scale)
+                } else {
+                    val (param, bin) = models.resolve(p.model)
+                    backends.open(p.model, param, bin, p.extra)
+                }.also { sessions += it }
                 NativeEngine.Pass(
                     session = s,
                     tile = if (s.usingGpu) p.model.tile else minOf(p.model.tile, CPU_TILE),
                     pad = p.model.pad,
                     downsample = p.downsample,
-                    post = PostOptions(p.tuning.detail, p.tuning.lumaOnly, p.tuning.colorFix),
+                    post = PostOptions(p.tuning.detail, p.tuning.lumaOnly, p.tuning.colorFix, p.preBlur),
                 )
             }
         } catch (e: Exception) {
@@ -98,7 +110,11 @@ class Upscaler(private val context: Context, appVersion: Long) {
         val preview = File(outDir, "preview.png")
         val tmp = File(context.cacheDir, "passes").apply { deleteRecursively(); mkdirs() }
         val started = SystemClock.elapsedRealtime()
-        val backend = if (passes.all { it.session.usingGpu }) BackendKind.VULKAN else BackendKind.CPU
+        val backend = if (plan.passes.zip(passes).all { (p, s) -> p.model.builtin || s.session.usingGpu }) {
+            BackendKind.VULKAN
+        } else {
+            BackendKind.CPU
+        }
         val status = try {
             onStarted { passes.first().session.cancel() }
             NativeEngine.runChain(

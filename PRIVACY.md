@@ -2,7 +2,7 @@
 
 Rescale processes images only on your device.
 
-- **No network access.** The app doesn't request the `INTERNET` permission, so Android won't let it connect anywhere. (Optional model downloads are planned. If they arrive, they will only happen when you tap Download, and an offline build without `INTERNET` will remain available.)
+- **Network only on request.** The app holds the `INTERNET` permission solely to download optional model packs from this project's GitHub releases, and only when you tap Download. Nothing else is ever sent or fetched: no update checks, no telemetry. Packs can also be imported from a file instead.
 - **No analytics, telemetry, ads, or crash reporting.**
 - **Permissions:**
   - Images are picked with the system Photo Picker, so no storage-read permission is needed.

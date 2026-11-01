@@ -139,6 +139,7 @@ fun EditorScreen(
     onToggleStage: (Stage) -> Unit,
     onPro: (Boolean) -> Unit,
     onOpenModels: () -> Unit,
+    onFinishBicubic: (Boolean) -> Unit,
     onStart: () -> Unit,
     onDismissError: () -> Unit,
 ) {
@@ -205,6 +206,21 @@ fun EditorScreen(
                     shape = SegmentedButtonDefaults.itemShape(i, Planner.supportedScales.size),
                 ) { Text("$s×") }
             }
+        }
+        val passes = Planner.factors(state.scale).size
+        if (passes >= 2) {
+            Notice(
+                if (passes >= 3) "Beyond 8×, detail is mostly invented. $passes passes, each blending in less generated detail."
+                else "8× runs two passes (4× then 2×). Expect invented texture at full zoom.",
+            )
+        }
+        if (passes >= 3) {
+            ToggleRow(
+                "Finish with plain resize",
+                "Do the last 2× with bicubic instead of the model: softer, fewer artifacts",
+                state.finishWithBicubic,
+                onFinishBicubic,
+            )
         }
 
         RestorationControls(state, onToggleStage, onPro, onOpenModels)

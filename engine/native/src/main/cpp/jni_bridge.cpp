@@ -22,7 +22,8 @@ using namespace rescale;
 namespace {
 
 struct Handle {
-    std::unique_ptr<NcnnRunner> runner;
+    std::unique_ptr<TileRunner> runner;
+    NcnnRunner* ncnn = nullptr;  // same object as runner when it's an ncnn model
     std::atomic<bool> cancel{false};
 };
 
@@ -50,18 +51,27 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeCreate(JNIEnv* env, jobj
                                                                jstring inBlob, jstring outBlob, jint scale,
                                                                jboolean gpu, jint threads) {
     auto h = std::make_unique<Handle>();
-    h->runner = std::make_unique<NcnnRunner>(scale, gpu, threads, str(env, inBlob), str(env, outBlob));
-    if (!h->runner->load(str(env, param), str(env, bin))) {
+    auto r = std::make_unique<NcnnRunner>(scale, gpu, threads, str(env, inBlob), str(env, outBlob));
+    if (!r->load(str(env, param), str(env, bin))) {
         LOGE("failed to load model %s", str(env, param).c_str());
         return 0;
     }
-    LOGI("model loaded, gpu=%d", h->runner->usingGpu());
+    LOGI("model loaded, gpu=%d", r->usingGpu());
+    h->ncnn = r.get();
+    h->runner = std::move(r);
+    return reinterpret_cast<jlong>(h.release());
+}
+
+JNIEXPORT jlong JNICALL
+Java_app_rescale_engine_nativebridge_NativeEngine_nativeCreateBicubic(JNIEnv*, jobject, jint scale) {
+    auto h = std::make_unique<Handle>();
+    h->runner = std::make_unique<BicubicRunner>(scale);
     return reinterpret_cast<jlong>(h.release());
 }
 
 JNIEXPORT jboolean JNICALL
 Java_app_rescale_engine_nativebridge_NativeEngine_nativeUsingGpu(JNIEnv*, jobject, jlong handle) {
-    return handle && from(handle)->runner->usingGpu();
+    return handle && from(handle)->ncnn && from(handle)->ncnn->usingGpu();
 }
 
 JNIEXPORT void JNICALL
@@ -98,12 +108,12 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeSetExtraInput(JNIEnv* en
     if (!handle) return;
     std::vector<float> v(env->GetArrayLength(values));
     env->GetFloatArrayRegion(values, 0, static_cast<jsize>(v.size()), v.data());
-    from(handle)->runner->setExtraInput(str(env, blob), std::move(v));
+    if (from(handle)->ncnn) from(handle)->ncnn->setExtraInput(str(env, blob), std::move(v));
 }
 
 JNIEXPORT void JNICALL
 Java_app_rescale_engine_nativebridge_NativeEngine_nativeSetAlignment(JNIEnv*, jobject, jlong handle, jint align) {
-    if (handle) from(handle)->runner->setAlignment(align);
+    if (handle && from(handle)->ncnn) from(handle)->ncnn->setAlignment(align);
 }
 
 // Runs a chain of passes. Arrays are parallel, one entry per pass. The first handle's
@@ -111,19 +121,21 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeSetAlignment(JNIEnv*, jo
 JNIEXPORT jint JNICALL
 Java_app_rescale_engine_nativebridge_NativeEngine_nativeRunChain(
     JNIEnv* env, jobject, jlongArray jHandles, jintArray jTiles, jintArray jPads, jintArray jDownsamples,
-    jfloatArray jDetails, jbooleanArray jLuma, jbooleanArray jColorFix, jobject bitmap, jint orientation,
+    jfloatArray jDetails, jbooleanArray jLuma, jbooleanArray jColorFix, jfloatArray jPreBlur, jobject bitmap,
+    jint orientation,
     jlong maxBandBytes, jstring tmpDir, jstring outPath, jstring previewPath, jint previewMax, jobject listener) {
     const jsize n = env->GetArrayLength(jHandles);
     if (n <= 0) return kModelError;
     std::vector<jlong> handles(n);
     std::vector<jint> tiles(n), pads(n), downs(n);
-    std::vector<jfloat> details(n);
+    std::vector<jfloat> details(n), preBlur(n);
     std::vector<jboolean> luma(n), cfix(n);
     env->GetLongArrayRegion(jHandles, 0, n, handles.data());
     env->GetIntArrayRegion(jTiles, 0, n, tiles.data());
     env->GetIntArrayRegion(jPads, 0, n, pads.data());
     env->GetIntArrayRegion(jDownsamples, 0, n, downs.data());
     env->GetFloatArrayRegion(jDetails, 0, n, details.data());
+    env->GetFloatArrayRegion(jPreBlur, 0, n, preBlur.data());
     env->GetBooleanArrayRegion(jLuma, 0, n, luma.data());
     env->GetBooleanArrayRegion(jColorFix, 0, n, cfix.data());
     for (jlong h : handles)
@@ -140,6 +152,7 @@ Java_app_rescale_engine_nativebridge_NativeEngine_nativeRunChain(
         passes[i].opt.post.detail = details[i];
         passes[i].opt.post.lumaOnly = luma[i];
         passes[i].opt.post.colorFix = cfix[i];
+        passes[i].opt.post.preBlur = preBlur[i];
         passes[i].downsample = std::max(1, static_cast<int>(downs[i]));
     }
 

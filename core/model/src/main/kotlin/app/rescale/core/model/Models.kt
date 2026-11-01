@@ -46,6 +46,8 @@ data class ModelSpec(
     /** Preferred tile size and reflect padding (input px). Big-receptive-field models want more. */
     val tile: Int = 192,
     val pad: Int = 12,
+    /** Runs natively without a network file (plain bicubic). */
+    val builtin: Boolean = false,
 ) {
     val paramFile get() = "$id.param"
     val binFile get() = "$id.bin"
@@ -59,6 +61,10 @@ object BundledModels {
     val ANIME_X4 = ANIME_X2.copy(id = "realesr-animevideov3-x4", displayName = "Real-ESRGAN animevideov3 x4", scale = 4)
 
     val all = listOf(GENERAL_X4V3, ANIME_X2, ANIME_X4)
+
+    fun bicubic(scale: Int) = ModelSpec(
+        "bicubic-x$scale", "Bicubic ×$scale", scale, "", "", "n/a", "", builtin = true, tile = 256, pad = 4,
+    )
 }
 
 /** Optional downloadable models (see Packs for what each pack contains). */
@@ -122,10 +128,18 @@ data class JobSettings(
     val jpegQuality: Int = 50,
     /** Use full-strength denoise (else 50%). */
     val strongDenoise: Boolean = false,
+    /** Long chains (3+ passes): do the last factor with plain bicubic instead of a model. */
+    val finishWithBicubic: Boolean = false,
 )
 
 /** One pass of the native chain. */
-data class PassPlan(val model: ModelSpec, val downsample: Int, val tuning: Tuning, val extra: FloatArray? = null) {
+data class PassPlan(
+    val model: ModelSpec,
+    val downsample: Int,
+    val tuning: Tuning,
+    val extra: FloatArray? = null,
+    val preBlur: Float = 0f,
+) {
     override fun equals(other: Any?) = other is PassPlan && model == other.model && downsample == other.downsample &&
         tuning == other.tuning && (extra?.toList() == other.extra?.toList())
     override fun hashCode() = model.hashCode() * 31 + downsample
@@ -136,14 +150,32 @@ data class PassPlan(val model: ModelSpec, val downsample: Int, val tuning: Tunin
  * box-downsamples by [downsample]; restoration passes come before it.
  */
 data class PipelinePlan(val passes: List<PassPlan>) {
-    val upscale: PassPlan get() = passes.last()
+    /** The first upscaling pass (after any 1× restoration passes). */
+    val upscale: PassPlan get() = passes.first { it.model.scale > 1 }
     val model: ModelSpec get() = upscale.model
     val downsample: Int get() = upscale.downsample
+    val upscalePasses: Int get() = passes.count { it.model.scale > 1 }
     val outputScale: Int get() = passes.fold(1) { acc, p -> acc * p.model.scale / p.downsample }
 }
 
 object Planner {
-    val supportedScales = listOf(2, 4)
+    val supportedScales = listOf(2, 4, 8, 16, 32)
+
+    /** Per-pass factors: prefer 4× then 2× (never 2×2×2). */
+    fun factors(scale: Int): List<Int> = when (scale) {
+        2 -> listOf(2)
+        4 -> listOf(4)
+        8 -> listOf(4, 2)
+        16 -> listOf(4, 4)
+        32 -> listOf(4, 4, 2)
+        else -> throw IllegalArgumentException("Unsupported scale $scale")
+    }
+
+    /** Each further pass invents more, so Detail decays (0.8 → 0.56 → 0.39). */
+    const val DETAIL_DECAY = 0.7f
+
+    /** Light blur before passes 2+ so the model doesn't "upscale its own textures". */
+    const val CHAIN_PRE_BLUR = 0.4f
 
     fun plan(mode: Mode, scale: Int): PipelinePlan = plan(JobSettings(mode, scale, Tuning.defaultFor(mode)), emptySet())
 
@@ -155,22 +187,31 @@ object Planner {
             val qf = 1f - s.jpegQuality.coerceIn(1, 100) / 100f
             passes += PassPlan(PackModels.FBCNN, 1, Tuning.NEUTRAL, floatArrayOf(qf))
         }
-        val upscaler = when (s.mode) {
-            Mode.PHOTO -> when {
-                Stage.DENOISE in s.stages && Packs.DENOISE in installedPacks ->
-                    if (s.strongDenoise) PackModels.DENOISE_100 else PackModels.DENOISE_50
-                s.pro && Packs.PHOTO_PRO in installedPacks -> PackModels.X4PLUS
-                else -> BundledModels.GENERAL_X4V3
-            }
-            Mode.ANIME -> when {
-                s.pro && Packs.ANIME_PRO in installedPacks -> PackModels.X4PLUS_ANIME
-                s.scale == 2 -> BundledModels.ANIME_X2
-                else -> BundledModels.ANIME_X4
-            }
+        val factors = factors(s.scale)
+        for ((n, f) in factors.withIndex()) {
+            val last = n == factors.lastIndex
+            val model = if (last && n >= 2 && s.finishWithBicubic) BundledModels.bicubic(f)
+            else upscaler(s, installedPacks, f, firstPass = n == 0)
+            val decay = Math.pow(DETAIL_DECAY.toDouble(), n.toDouble()).toFloat()
+            val tuning = if (model.builtin) Tuning.NEUTRAL else s.tuning.copy(detail = (s.tuning.detail * decay).coerceIn(0f, 1f))
+            // 4× models make 2× by area-downsampling (same as Real-ESRGAN's --outscale).
+            passes += PassPlan(model, model.scale / f, tuning, preBlur = if (n > 0 && !model.builtin) CHAIN_PRE_BLUR else 0f)
         }
-        // 4× models make 2× by area-downsampling (same as Real-ESRGAN's --outscale).
-        passes += PassPlan(upscaler, upscaler.scale / s.scale, s.tuning)
         return PipelinePlan(passes)
+    }
+
+    private fun upscaler(s: JobSettings, packs: Set<String>, factor: Int, firstPass: Boolean): ModelSpec = when (s.mode) {
+        Mode.PHOTO -> when {
+            firstPass && Stage.DENOISE in s.stages && Packs.DENOISE in packs ->
+                if (s.strongDenoise) PackModels.DENOISE_100 else PackModels.DENOISE_50
+            s.pro && Packs.PHOTO_PRO in packs -> PackModels.X4PLUS
+            else -> BundledModels.GENERAL_X4V3
+        }
+        Mode.ANIME -> when {
+            s.pro && Packs.ANIME_PRO in packs -> PackModels.X4PLUS_ANIME
+            factor == 2 -> BundledModels.ANIME_X2
+            else -> BundledModels.ANIME_X4
+        }
     }
 }
 

@@ -9,11 +9,11 @@ The outline's open decisions, as resolved for the MVP. Each one is easy to revis
 | 3 | minSdk | **26** | Wider reach; CPU fallback covers devices without good Vulkan |
 | 4 | Runtime | **ncnn only** (Vulkan + its own CPU path) | One runtime covers both backends for CNN models; ONNX Runtime comes with transformer models |
 | 5 | Transformer models | **Not yet** | CNN-only until parity and speed tests pass on device |
-| 6 | INTERNET permission | **None** | No downloads in v0.1, so the default build is fully offline |
+| 6 | INTERNET permission | **Single build with INTERNET** (from v0.4) | Used only for user-initiated pack downloads; packs are also importable from a zip. No offline flavor, by the owner's call |
 | 7 | Bundled models | general-x4v3, animevideov3 x2 + x4 (~5 MB) | YuNet arrives with face restoration |
 | 8 | Output format | **PNG** | Lossless and streamable to any size; JPEG/WebP export in v1.0 |
 | 9 | Face restoration default | n/a | Not in v0.1 |
-| 10 | Chained passes UX | n/a | 2× and 4× only in v0.1 |
+| 10 | Chained passes UX | **Fixed presets 2/4/8/16/32** (v0.4) | Each maps to a known-good pass plan (4× then 2×); warnings beyond 8× |
 | 11 | ABIs | arm64-v8a, armeabi-v7a, x86_64 + universal | v7a costs little and covers old phones |
 | 12 | Distribution | GitHub Releases (+ Obtainium); F-Droid later | F-Droid needs ncnn built from source instead of the prebuilt |
 | 13 | Name | **Rescale** | Working name from the outline |

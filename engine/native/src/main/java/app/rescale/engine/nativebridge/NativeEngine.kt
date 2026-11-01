@@ -12,7 +12,13 @@ fun interface ProgressListener {
  * model's brightness but the source's colour. [colorFix]: pull large-scale colour and
  * brightness back to the source.
  */
-data class PostOptions(val detail: Float = 1f, val lumaOnly: Boolean = false, val colorFix: Boolean = false)
+data class PostOptions(
+    val detail: Float = 1f,
+    val lumaOnly: Boolean = false,
+    val colorFix: Boolean = false,
+    /** Gaussian sigma (input px) applied before inference; used on chained passes. */
+    val preBlur: Float = 0f,
+)
 
 /** Result codes from the native engine (mirror of rescale::Status). */
 object NativeStatus {
@@ -87,8 +93,12 @@ object NativeEngine {
         passes.map { it.post.detail }.toFloatArray(),
         passes.map { it.post.lumaOnly }.toBooleanArray(),
         passes.map { it.post.colorFix }.toBooleanArray(),
+        passes.map { it.post.preBlur }.toFloatArray(),
         bitmap, exifOrientation, maxBandBytes, tmpDir, outPath, previewPath, previewMax, listener,
     )
+
+    /** A plain bicubic "model" (no network), to finish long chains without invented detail. */
+    fun openBicubic(scale: Int): Session = Session(nativeCreateBicubic(scale))
 
     /** Returns null if the model files can't be loaded. */
     fun open(
@@ -112,11 +122,12 @@ object NativeEngine {
     @JvmStatic private external fun nativeDestroy(handle: Long)
     @JvmStatic private external fun nativeCancel(handle: Long)
     @JvmStatic private external fun nativeProbe(handle: Long): FloatArray?
+    @JvmStatic private external fun nativeCreateBicubic(scale: Int): Long
     @JvmStatic private external fun nativeSetExtraInput(handle: Long, blob: String, values: FloatArray)
     @JvmStatic private external fun nativeSetAlignment(handle: Long, align: Int)
     @JvmStatic private external fun nativeRunChain(
         handles: LongArray, tiles: IntArray, pads: IntArray, downsamples: IntArray,
-        details: FloatArray, lumaOnly: BooleanArray, colorFix: BooleanArray,
+        details: FloatArray, lumaOnly: BooleanArray, colorFix: BooleanArray, preBlur: FloatArray,
         bitmap: Bitmap, orientation: Int, maxBandBytes: Long, tmpDir: String,
         outPath: String, previewPath: String?, previewMax: Int, listener: ProgressListener?,
     ): Int

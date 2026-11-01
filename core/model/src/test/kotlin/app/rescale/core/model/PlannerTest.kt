@@ -1,6 +1,8 @@
 package app.rescale.core.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlannerTest {
@@ -27,6 +29,45 @@ class PlannerTest {
     @Test(expected = IllegalArgumentException::class)
     fun rejectsUnsupportedScale() {
         Planner.plan(Mode.PHOTO, 3)
+    }
+
+    @Test fun chainsPrefer4xThen2x() {
+        for (scale in Planner.supportedScales) {
+            for (mode in Mode.entries) {
+                val p = Planner.plan(mode, scale)
+                assertEquals("$mode $scale", scale, p.outputScale)
+            }
+        }
+        val p8 = Planner.plan(Mode.PHOTO, 8)
+        assertEquals(2, p8.passes.size)
+        assertEquals(1, p8.passes[0].downsample)
+        assertEquals(2, p8.passes[1].downsample)
+        assertEquals(BundledModels.ANIME_X2, Planner.plan(Mode.ANIME, 32).passes[2].model)
+    }
+
+    @Test fun laterPassesDecayDetailAndPreBlur() {
+        val s = JobSettings(Mode.PHOTO, 32, Tuning(detail = 0.8f))
+        val p = Planner.plan(s, emptySet())
+        assertEquals(listOf(0.8f, 0.56f, 0.392f), p.passes.map { Math.round(it.tuning.detail * 1000) / 1000f })
+        assertEquals(listOf(0f, Planner.CHAIN_PRE_BLUR, Planner.CHAIN_PRE_BLUR), p.passes.map { it.preBlur })
+    }
+
+    @Test fun longChainsCanFinishWithBicubic() {
+        val s = JobSettings(Mode.PHOTO, 32, Tuning(detail = 0.8f), finishWithBicubic = true)
+        val last = Planner.plan(s, emptySet()).passes.last()
+        assertTrue(last.model.builtin)
+        assertEquals(2, last.model.scale)
+        assertEquals(1, last.downsample)
+        assertEquals(Tuning.NEUTRAL, last.tuning)
+        // Ignored for short chains.
+        assertFalse(Planner.plan(s.copy(scale = 8), emptySet()).passes.last().model.builtin)
+    }
+
+    @Test fun denoiseOnlyOnFirstUpscalePass() {
+        val s = JobSettings(Mode.PHOTO, 16, Tuning(0.8f), listOf(Stage.DENOISE, Stage.DE_JPEG))
+        val p = Planner.plan(s, setOf(Packs.DENOISE, Packs.JPEG))
+        assertEquals(listOf(PackModels.FBCNN, PackModels.DENOISE_50, BundledModels.GENERAL_X4V3), p.passes.map { it.model })
+        assertEquals(16, p.outputScale)
     }
 
     @Test fun deJpegPassRunsFirstWithQualityInput() {

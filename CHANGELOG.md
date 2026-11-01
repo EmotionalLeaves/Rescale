@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.0
+
+Model packs, restoration stages and chained passes (build-order steps 11–13).
+
+- **Model packs** (Menu → Model packs): optional downloads published as the `models-v1` release, pinned by SHA-256 in the app and verified file by file before use. Downloads resume after interruptions, and packs can also be **imported** from a zip for phones without internet. The internet permission is used only when you tap Download.
+  - **JPEG repair** (FBCNN, 92 MB): **De-JPEG** stage, driven by the JPEG quality read from the file
+  - **Denoise** (4 MB): **Denoise** stage for grainy photos (50% or full strength)
+  - **Photo Pro** / **Anime Pro**: Real-ESRGAN x4plus models, sharper texture, slower
+- **Restoration chips** in the editor. Auto turns on De-JPEG and Denoise when it sees compression or noise and the pack is installed
+- **8×, 16× and 32×** via chained passes (4× then 2×, never 2×2×2). Later passes get a light pre-blur and decaying Detail so the model doesn't sharpen its own artifacts, with warnings beyond 8× and an option to finish 32× with a plain resize
+- The engine runs any chain of passes with memory-mapped intermediates on disk, so a chain doesn't need the intermediate image in RAM
+
 ## v0.3.0
 
 Auto mode (build-order step 10).

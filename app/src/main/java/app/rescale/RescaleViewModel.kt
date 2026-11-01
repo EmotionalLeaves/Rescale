@@ -66,6 +66,7 @@ data class EditorState(
     val pro: Boolean = false,
     val jpegQuality: Int = 50,
     val strongDenoise: Boolean = false,
+    val finishWithBicubic: Boolean = false,
     val installedPacks: Set<String> = emptySet(),
     val error: String? = null,
     val resultDismissed: Boolean = false,
@@ -81,7 +82,7 @@ data class EditorState(
             AutoPlanner.plan(a, Stage.entries.filter { it.packId in installedPacks }.toSet())
         }
     val settings: JobSettings
-        get() = JobSettings(mode, scale, tuning, stages, pro, jpegQuality, strongDenoise)
+        get() = JobSettings(mode, scale, tuning, stages, pro, jpegQuality, strongDenoise, finishWithBicubic)
     val proAvailable: Boolean
         get() = (if (mode == Mode.PHOTO) Packs.PHOTO_PRO else Packs.ANIME_PRO) in installedPacks
     val tooLarge: Boolean get() = input?.let { it.info.width.toLong() * it.info.height > Limits.MAX_INPUT_PIXELS } ?: false
@@ -154,6 +155,7 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setPro(v: Boolean) = _state.update { it.copy(pro = v, auto = false) }
+    fun setFinishWithBicubic(v: Boolean) = _state.update { it.copy(finishWithBicubic = v) }
 
     init {
         viewModelScope.launch {

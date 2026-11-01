@@ -7,10 +7,11 @@
 
 > **Honesty note:** upscaling *invents* plausible detail. It doesn't recover detail that was never captured. Don't treat results as evidence, especially faces and text.
 
-## Features (v0.3)
+## Features (v0.4)
 
 - **Auto** mode: analyses compression, noise, sharpness and content type, then picks the model and settings for you (and says what it picked)
-- **Photo** mode (Real-ESRGAN general-x4v3) and **Anime / Art** mode (Real-ESRGAN animevideov3), at 2× or 4×
+- **Photo** mode (Real-ESRGAN general-x4v3) and **Anime / Art** mode (Real-ESRGAN animevideov3), at 2×, 4×, 8×, 16× or 32× (chained passes with pre-blur and decaying detail)
+- Optional **model packs** (downloaded on request and SHA-256 verified, or imported from a zip): **De-JPEG** (FBCNN), **Denoise**, and **Pro** upscalers (Real-ESRGAN x4plus)
 - **GPU (Vulkan) via ncnn**, with automatic CPU fallback. On first use, a self-test compares GPU and CPU output and switches to CPU on devices whose drivers return garbage
 - **Tiled processing streamed to disk.** Outputs are written row band by row band straight into a PNG, so the full output is never held in memory. Tiles overlap and are cross-faded with Hann ramps, and borders are reflect-padded, so there are no seams (verified at < 1/255 vs whole-image inference)
 - **Detail slider** (faithful ↔ generated), **Match source colors** and **Keep original colors** controls to tame GAN artifacts
@@ -19,11 +20,11 @@
 - Save to `Pictures/Rescale`, or share. Rescale also appears in the share sheet ("Upscale with Rescale")
 - Respects EXIF orientation, keeps transparency (alpha is upscaled separately)
 
-Planned next (see [the outline](docs/outline.md)): JPEG/noise/face restoration stages, chained 8×/16×+ passes, model packs, batch queue, JPEG/WebP export.
+Planned next (see [the outline](docs/outline.md)): face restoration, deep-zoom compare, batch queue, JPEG/WebP export, thermal management.
 
 ## Download
 
-Grab the APK from [Releases](https://github.com/EmotionalLeaves/Rescale/releases). Most phones want `app-arm64-v8a-release.apk`; `app-universal-release.apk` works everywhere. Each release lists SHA-256 checksums. You can also track releases with [Obtainium](https://github.com/ImranR98/Obtainium).
+Grab the APK from [Releases](https://github.com/EmotionalLeaves/Rescale/releases). Most phones want `rescale-X.Y.Z-arm64-v8a.apk`; the `universal` APK works everywhere. Each release lists SHA-256 checksums. You can also track releases with [Obtainium](https://github.com/ImranR98/Obtainium).
 
 Requires Android 8.0+ (API 26). Vulkan is used where available.
 
@@ -33,6 +34,9 @@ Requires Android 8.0+ (API 26). Vulkan is used where available.
 |---|---|---|---|
 | Photo | realesr-general-x4v3 | 2.4 MB | BSD-3-Clause |
 | Anime / Art | realesr-animevideov3 x2, x4 | 1.2 MB each | BSD-3-Clause |
+| De-JPEG (pack) | FBCNN color | 92 MB | Apache-2.0 |
+| Denoise (pack) | general-x4v3 + wdn blends | 4 MB | BSD-3-Clause |
+| Pro (packs) | RealESRGAN x4plus / x4plus anime 6B | 29 MB / 7 MB | BSD-3-Clause |
 
 See [MODELS_LICENSES.md](MODELS_LICENSES.md). The Photo model was converted with [`tools/model-conversion`](tools/model-conversion) (PyTorch → pnnx → ncnn, 64 dB parity).
 
@@ -72,7 +76,7 @@ More in [docs/architecture.md](docs/architecture.md).
 
 ## Privacy
 
-Rescale has no `INTERNET` permission, no analytics and no crash reporting. Images never leave the device. See [PRIVACY.md](PRIVACY.md).
+Images never leave the device. There are no analytics and no crash reporting. The internet is used only when you tap Download on a model pack. See [PRIVACY.md](PRIVACY.md).
 
 ## Credits
 

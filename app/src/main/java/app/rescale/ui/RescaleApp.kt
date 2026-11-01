@@ -145,6 +145,7 @@ fun RescaleApp(vm: RescaleViewModel) {
                     onToggleStage = vm::toggleStage,
                     onPro = vm::setPro,
                     onOpenModels = { showModels = true },
+                    onFinishBicubic = vm::setFinishWithBicubic,
                     onStart = start,
                     onDismissError = vm::dismissError,
                 )

@@ -138,6 +138,7 @@ Status upscale(const Image& img, TileRunner& runner, const EngineOptions& opt, R
                     in[2 * plane + k] = p[2] * (1.0f / 255.0f);
                 }
             }
+            if (opt.post.preBlur > 0.f) blurPlanes(in, inW, inH, opt.post.preBlur);
             if (!runner.run(in, inW, inH, out)) return kModelError;
             const int ow = inW * s;
             const size_t oplane = static_cast<size_t>(ow) * inH * s;

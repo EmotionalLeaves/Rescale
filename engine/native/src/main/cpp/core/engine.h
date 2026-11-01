@@ -52,6 +52,20 @@ enum Status : int {
 
 using ProgressFn = std::function<void(int done, int total)>;
 
+// Plain bicubic upscale as a TileRunner (used to finish long chains without inventing detail).
+class BicubicRunner : public TileRunner {
+public:
+    explicit BicubicRunner(int s) : s_(s) {}
+    int scale() const override { return s_; }
+    bool run(const std::vector<float>& in, int w, int h, std::vector<float>& out) override {
+        bicubicUpscale(in, w, h, s_, out);
+        return true;
+    }
+
+private:
+    int s_;
+};
+
 // Output rows are width*scale wide, with 4 channels if the image has alpha, else 3.
 Status upscale(const Image& img, TileRunner& runner, const EngineOptions& opt, RowSink& sink,
                const ProgressFn& progress, const std::atomic<bool>* cancel);
