@@ -39,7 +39,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import app.rescale.core.model.Stage
-import app.rescale.core.model.PackModels
+import app.rescale.core.model.Generative
 import app.rescale.core.model.Packs
 import androidx.compose.material3.Slider
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -357,24 +357,28 @@ private fun RestorationControls(
             Notice("Restored faces are partly invented. Small faces can end up looking like someone else. Don't use results as evidence.")
         }
         if (state.generativeAvailable) {
-            val tiles = state.input?.info?.let { generativeTiles(it.width, it.height) } ?: 0
-            ToggleRow(
-                "Generative detail",
-                "One-step diffusion model: realistic hair, skin and fabric. Slow: about $tiles tiles " +
-                    "at 1–3 s each on a fast GPU, much longer on CPU.",
-                state.generative,
-                onGenerative,
-            )
-            if (state.generative) {
-                Notice("Generative detail redraws the image: small faces, text and patterns can change. Don't use it where accuracy matters.")
+            val tiles = state.input?.info?.let { Generative.tiles(it.width, it.height) } ?: 0
+            if (state.generativeFits) {
+                ToggleRow(
+                    "Generative detail",
+                    "One-step diffusion model: realistic hair, skin and fabric. Slow: $tiles tiles, " +
+                        "roughly ${(tiles * 2 + 59) / 60}–${(tiles * 10 + 59) / 60} min depending on the phone.",
+                    state.generative,
+                    onGenerative,
+                )
+                if (state.generative) {
+                    Notice("Generative detail redraws the image: small faces, text and patterns can change. Don't use it where accuracy matters.")
+                }
+            } else {
+                Notice(
+                    "Generative detail: this image is too big ($tiles tiles; the limit is ${Generative.MAX_TILES}, " +
+                        "about 880 × 720 px). On a phone it would take hours. Crop it or use a smaller image.",
+                )
             }
         } else if (state.mode == Mode.PHOTO && Packs.GENERATIVE !in state.installedPacks) {
             TextButton(onClick = onOpenModels) { Text("Get Generative detail (diffusion model)") }
         }
-        if (state.mode == Mode.TEXT && Packs.TEXT !in state.installedPacks) {
-            TextButton(onClick = onOpenModels) { Text("Get the Text pack for sharper letters") }
-        }
-        if (state.proAvailable && !(state.generative && state.generativeAvailable)) {
+        if (state.proAvailable && !state.settings.generative) {
             ToggleRow(
                 "Pro model",
                 "Larger model with stronger texture; several times slower",
@@ -385,12 +389,6 @@ private fun RestorationControls(
     }
 }
 
-/** Tiles the generative pass runs over a w×h input (engine layout: 96-px tiles, 16-px overlap). */
-internal fun generativeTiles(w: Int, h: Int): Int {
-    val t = PackModels.ADCSR.tile
-    val axis = { n: Int -> if (n <= t) 1 else (n - 16 + (t - 16) - 1) / (t - 16) }
-    return axis(w) * axis(h)
-}
 
 @Composable
 private fun DetailControls(

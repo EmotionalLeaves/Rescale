@@ -124,6 +124,15 @@ class PlannerTest {
         for (scale in Planner.supportedScales) assertEquals(scale, Planner.plan(s.copy(scale = scale), setOf(Packs.TEXT)).outputScale)
     }
 
+    @Test fun generativeTileLimit() {
+        assertEquals(1, Generative.tiles(96, 50))
+        assertEquals(4 * 3, Generative.tiles(300, 200))   // matches the engine's tile plan
+        assertTrue(Generative.fits(880, 720))
+        assertFalse(Generative.fits(900, 700))
+        assertFalse(Generative.fits(4080, 3072))           // a 12 MP camera photo: ~1,900 tiles
+        assertTrue(Generative.tiles(4080, 3072) > 1800)
+    }
+
     @Test fun repairIsNotAPass() {
         val s = JobSettings(Mode.PHOTO, 4, Tuning.defaultFor(Mode.PHOTO), listOf(Stage.REPAIR))
         assertEquals(listOf(BundledModels.GENERAL_X4V3), Planner.plan(s, setOf(Packs.REPAIR)).passes.map { it.model })

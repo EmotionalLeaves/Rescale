@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.8.1
+
+- **Generative detail no longer starts jobs it can't finish.** It costs ~1–3 s per tile on a fast GPU and ~10 s on CPU, so a full camera photo (~1,900 tiles) took hours. It's now limited to 100 tiles (about 880 × 720 px); bigger images show why it's unavailable instead of the toggle
+- The toggle shows the tile count and a time range for this image
+
 ## v0.8.0
 
 Sharper text.

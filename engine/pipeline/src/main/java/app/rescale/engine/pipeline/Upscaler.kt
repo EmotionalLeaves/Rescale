@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import app.rescale.core.model.BundledModels
+import app.rescale.core.model.Generative
 import app.rescale.core.model.JobSettings
 import app.rescale.core.model.Limits
 import app.rescale.core.model.PackModels
@@ -68,6 +69,12 @@ class Upscaler(private val context: Context, appVersion: Long) {
         }
 
         val plan = Planner.plan(req.settings, packs.installed())
+        if (plan.passes.any { it.model == PackModels.ADCSR } && !Generative.fits(info.width, info.height)) {
+            return UpscaleOutcome.Failed(
+                "Too big for Generative detail (${Generative.tiles(info.width, info.height)} tiles, limit ${Generative.MAX_TILES}). " +
+                    "Crop it or turn Generative detail off.",
+            )
+        }
         val scale = plan.outputScale
         val outW = info.width.toLong() * scale
         val outH = info.height.toLong() * scale

@@ -109,10 +109,12 @@ data class EditorState(
     val settings: JobSettings
         get() = JobSettings(
             mode, scale, tuning, stages, pro, jpegQuality, strongDenoise, finishWithBicubic, faceStrength,
-            generative = generative && generativeCapable && mode == Mode.PHOTO,
+            generative = generative && generativeAvailable && generativeFits,
             autoDamage = autoDamage,
         )
     val generativeAvailable: Boolean get() = generativeCapable && mode == Mode.PHOTO
+    val generativeFits: Boolean
+        get() = input?.info?.let { app.rescale.core.model.Generative.fits(it.width, it.height) } ?: false
     val proAvailable: Boolean
         get() = when (mode) {
             Mode.PHOTO -> Packs.PHOTO_PRO in installedPacks

@@ -41,7 +41,8 @@ object AutoPlanner {
             if (a.noisy && Stage.DENOISE !in stages) detail = minOf(detail, 0.6f)
         }
         // Small photos are where generated detail impresses most and costs least.
-        val generative = generativeOk && mode == Mode.PHOTO && a.width.toLong() * a.height <= GENERATIVE_MAX_PIXELS
+        val generative = generativeOk && mode == Mode.PHOTO && a.width.toLong() * a.height <= GENERATIVE_MAX_PIXELS &&
+            Generative.fits(a.width, a.height)
         if (generative) detail = maxOf(detail, 0.9f)
         val tuning = Tuning(detail = detail, colorFix = true, lumaOnly = a.grayscale)
         // Header quality when it's a JPEG; otherwise guess from how blocky it looks.

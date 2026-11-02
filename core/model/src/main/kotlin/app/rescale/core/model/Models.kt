@@ -142,6 +142,25 @@ object PackModels {
     val all = listOf(FBCNN, DENOISE_50, DENOISE_100, X4PLUS, X4PLUS_ANIME, GFPGAN, RETINAFACE, ADCSR, SCRATCH, MIGAN, REALESRNET)
 }
 
+/**
+ * Work limits for the generative pass. It costs ~1–3 s per 96-px tile on a fast phone GPU and
+ * ~10 s on CPU, so a full 12 MP camera photo (~1,900 tiles) would take hours. Inputs above
+ * [MAX_TILES] (about 0.6 MP, e.g. 880×720) are refused instead.
+ */
+object Generative {
+    const val MAX_TILES = 100
+
+    /** Tiles the engine runs over a w×h input (96-px tiles, 16-px overlap, same layout as the engine). */
+    fun tiles(w: Int, h: Int): Int {
+        val t = PackModels.ADCSR.tile
+        val step = t - 16
+        fun axis(n: Int) = if (n <= t) 1 else 1 + (n - t + step - 1) / step
+        return axis(w) * axis(h)
+    }
+
+    fun fits(w: Int, h: Int) = tiles(w, h) <= MAX_TILES
+}
+
 object Packs {
     const val JPEG = "jpeg"
     const val DENOISE = "denoise"
