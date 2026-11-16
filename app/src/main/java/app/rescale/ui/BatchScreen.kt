@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -46,8 +47,8 @@ fun BatchScreen(items: List<BatchItem>, onAdd: () -> Unit, onCancel: () -> Unit,
         val saved = items.count { it.state == BatchItem.State.SAVED }
         Text(
             if (items.isEmpty()) "No batch yet. Each image gets its own Auto settings and is saved to Pictures/Rescale."
-            else "$saved of ${items.size} saved to Pictures/Rescale",
-            style = MaterialTheme.typography.bodyMedium,
+            else "$saved of ${plural(items.size, "image")} saved to Pictures/Rescale",
+            style = MaterialTheme.typography.titleMedium,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onAdd) { Text("Add images") }
@@ -100,8 +101,10 @@ fun BatchSetupSheet(
     var charging by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Batch of $count image(s)", style = MaterialTheme.typography.titleMedium)
-            Text("Scale", style = MaterialTheme.typography.titleSmall)
+            Text("Batch of ${plural(count, "image")}", style = MaterialTheme.typography.titleLarge)
+            Text("Each image is analysed and gets its own Auto settings.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SectionTitle("Size")
             val scales = listOf(0 to "Auto", 2 to "2×", 4 to "4×", 8 to "8×")
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                 scales.forEachIndexed { i, (v, label) ->
@@ -109,7 +112,7 @@ fun BatchSetupSheet(
                         shape = SegmentedButtonDefaults.itemShape(i, scales.size)) { Text(label) }
                 }
             }
-            Text("Save as", style = MaterialTheme.typography.titleSmall)
+            SectionTitle("Save as")
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                 ExportFormat.entries.forEachIndexed { i, f ->
                     SegmentedButton(selected = format == f, onClick = { format = f },
@@ -119,7 +122,7 @@ fun BatchSetupSheet(
             ToggleRow("Only while charging", "Starts when the phone is plugged in", charging) { charging = it }
             Button(
                 onClick = { onStart(scale, initialExport.copy(format = format), charging) },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
             ) { Text("Start batch") }
         }
     }

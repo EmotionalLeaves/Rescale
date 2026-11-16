@@ -32,6 +32,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_SEND_MULTIPLE) {
+            val uris = IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
+            when {
+                uris.size > 1 -> vm.offerBatch(uris)
+                uris.size == 1 && vm.job.value !is app.rescale.worker.JobState.Running -> vm.pick(uris[0])
+            }
+            return
+        }
         val uri: Uri? = when (intent?.action) {
             Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
             Intent.ACTION_VIEW -> intent.data
