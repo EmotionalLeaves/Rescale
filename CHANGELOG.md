@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.9.1
+
+Round two of the cleanup.
+
+- **Batch page redesigned** to match the rest of the app: a big "3 of 10 saved" summary, one card per image with a clear status, a friendly empty state, and the Add / Cancel buttons pinned at the bottom
+- Batch rows no longer flicker when an image changes state
+- Navigation (which screen shows, where Back goes, which screens have the gear) is now plain functions with unit tests, run in CI
+- Opted out of Android cloud backup and device transfer explicitly (Rescale already kept nothing worth backing up)
+- Small code-quality fixes flagged by Android lint
+
 ## v0.9.0
 
 A cleaner, bolder app with one way in.

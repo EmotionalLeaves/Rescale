@@ -1,6 +1,16 @@
 package app.rescale.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,44 +53,136 @@ import app.rescale.worker.BatchItem
 @Composable
 fun BatchScreen(items: List<BatchItem>, onAdd: () -> Unit, onCancel: () -> Unit, onClear: () -> Unit) {
     val active = items.any { it.state == BatchItem.State.QUEUED || it.state == BatchItem.State.RUNNING }
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        val saved = items.count { it.state == BatchItem.State.SAVED }
-        Text(
-            if (items.isEmpty()) "No batch yet. Each image gets its own Auto settings and is saved to Pictures/Rescale."
-            else "$saved of ${plural(items.size, "image")} saved to Pictures/Rescale",
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onAdd) { Text("Add images") }
-            if (active) OutlinedButton(onClick = onCancel) { Text("Cancel remaining") }
-            else if (items.isNotEmpty()) OutlinedButton(onClick = onClear) { Text("Clear list") }
+    Column(Modifier.fillMaxSize()) {
+        if (items.isEmpty()) {
+            Column(
+                Modifier.weight(1f).fillMaxWidth().padding(32.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    Icons.Default.PhotoLibrary,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(56.dp),
+                )
+                Spacer(Modifier.height(16.dp))
+                Text("No batch yet", style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Add several images and Rescale does them one after another, each with its own Auto settings, " +
+                        "saving them to Pictures/Rescale.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        } else {
+            LazyColumn(
+                Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item { Summary(items, active) }
+                items(items, key = { "${it.index}-${it.name}" }) { ItemRow(it) }
+            }
         }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(items, key = { "${it.index}-${it.name}-${it.state}" }) { item ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val (icon, tint) = when (item.state) {
-                        BatchItem.State.SAVED -> Icons.Default.CheckCircle to MaterialTheme.colorScheme.primary
-                        BatchItem.State.FAILED -> Icons.Default.ErrorOutline to MaterialTheme.colorScheme.error
-                        BatchItem.State.CANCELLED -> Icons.Outlined.Cancel to MaterialTheme.colorScheme.onSurfaceVariant
-                        else -> Icons.Default.HourglassEmpty to MaterialTheme.colorScheme.onSurfaceVariant
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 3.dp) {
+            Row(
+                Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (active) {
+                    OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
+                        Text("Cancel the rest")
                     }
-                    Icon(icon, contentDescription = item.state.name.lowercase(), tint = tint, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.size(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(item.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                        when (item.state) {
-                            BatchItem.State.RUNNING -> if (item.total > 0) {
-                                LinearProgressIndicator(
-                                    progress = { item.done.toFloat() / item.total },
-                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                )
-                            } else {
-                                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 4.dp))
-                            }
-                            BatchItem.State.QUEUED -> Text("Waiting", style = MaterialTheme.typography.labelSmall)
-                            else -> item.message?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
-                        }
+                } else if (items.isNotEmpty()) {
+                    OutlinedButton(onClick = onClear, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
+                        Text("Clear list")
                     }
+                }
+                Button(onClick = onAdd, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
+                    Icon(Icons.Default.AddPhotoAlternate, contentDescription = null)
+                    Spacer(Modifier.size(8.dp))
+                    Text("Add images")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Summary(items: List<BatchItem>, active: Boolean) {
+    val saved = items.count { it.state == BatchItem.State.SAVED }
+    val failed = items.count { it.state == BatchItem.State.FAILED }
+    val finished = items.count { it.state != BatchItem.State.QUEUED && it.state != BatchItem.State.RUNNING }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        shape = MaterialTheme.shapes.large,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Text(
+                if (active) "Working on it" else "Done",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Text(
+                "$saved of ${items.size} saved",
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Text(
+                "To Pictures/Rescale" + if (failed > 0) " · ${plural(failed, "failed", "failed")}" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            if (active) {
+                Spacer(Modifier.height(12.dp))
+                LinearProgressIndicator(
+                    progress = { finished.toFloat() / items.size },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ItemRow(item: BatchItem) {
+    val (icon, tint, label) = when (item.state) {
+        BatchItem.State.SAVED -> Triple(Icons.Default.CheckCircle, MaterialTheme.colorScheme.primary, "Saved")
+        BatchItem.State.FAILED -> Triple(Icons.Default.ErrorOutline, MaterialTheme.colorScheme.error, "Failed")
+        BatchItem.State.CANCELLED -> Triple(Icons.Outlined.Cancel, MaterialTheme.colorScheme.onSurfaceVariant, "Cancelled")
+        BatchItem.State.RUNNING -> Triple(Icons.Default.AutoAwesome, MaterialTheme.colorScheme.tertiary, "Working")
+        BatchItem.State.QUEUED -> Triple(Icons.Default.HourglassEmpty, MaterialTheme.colorScheme.onSurfaceVariant, "Waiting")
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(item.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (item.state == BatchItem.State.RUNNING) {
+                    if (item.total > 0) {
+                        LinearProgressIndicator(
+                            progress = { item.done.toFloat() / item.total },
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        )
+                    } else {
+                        LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
+                    }
+                } else {
+                    Text(
+                        item.message ?: label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (item.state == BatchItem.State.FAILED) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
