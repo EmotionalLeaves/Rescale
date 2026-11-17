@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.9.0
+
+A cleaner, bolder app with one way in.
+
+- **One button to start.** "Choose images" takes one image (opens the editor) or several (sets up a batch). The separate Batch button is gone
+- **Share several images to Rescale** from your gallery and they go straight into a batch
+- **No more ⋮ menu.** Model packs, Gentle mode, CPU only, About and Licenses now live on a single Settings page (gear icon)
+- **Editor reorganised** into Image type, Size, Fix and Fine-tune. Fine-tune (Detail, colours, Pro model, plain last pass) is folded away by default and shows a one-line summary of what's set
+- **Upscale button pinned to the bottom**, with the output size and anything blocking it right above it
+- Options that need a model pack show a download icon instead of "· get pack" text
+- A running or finished batch shows as a card on the start screen
+- System Back now matches the on-screen back arrow (editor → start, result → editor)
+- **New look:** Rescale's own ink, violet and amber palette (no longer follows the wallpaper), heavier headings, rounder cards, a big percentage while working, and a matching launcher icon
+- Licenses now list RealESRNet x4plus (Text pack)
+
 ## v0.8.1
 
 - **Generative detail no longer starts jobs it can't finish.** It costs ~1–3 s per tile on a fast GPU and ~10 s on CPU, so a full camera photo (~1,900 tiles) took hours. It's now limited to 100 tiles (about 880 × 720 px); bigger images show why it's unavailable instead of the toggle

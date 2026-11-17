@@ -6,16 +6,16 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -23,8 +23,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,38 +33,59 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.rescale.EditorState
 import app.rescale.RescaleViewModel
+import app.rescale.worker.BatchItem
 import app.rescale.worker.JobState
 
-private enum class Screen { Home, Editor, Running, Result, Models, Batch, Mask }
+/** Where the user is. Derived from the job and editor state, plus one of two side pages. */
+private enum class Screen { Home, Editor, Running, Result, Mask, Settings, Batch }
+
+/** The two pages you open on purpose; everything else follows from what's happening. */
+private enum class Page { Settings, Batch }
+
+private fun screenFor(page: Page?, job: JobState, state: EditorState): Screen = when {
+    page == Page.Settings -> Screen.Settings
+    page == Page.Batch -> Screen.Batch
+    job is JobState.Running -> Screen.Running
+    state.editingMask && state.input?.thumbnail != null -> Screen.Mask
+    job is JobState.Done && !state.resultDismissed -> Screen.Result
+    state.input != null -> Screen.Editor
+    else -> Screen.Home
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RescaleApp(vm: RescaleViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     val job by vm.job.collectAsStateWithLifecycle()
-    val snackbar = remember { SnackbarHostState() }
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var menuOpen by remember { mutableStateOf(false) }
-    var dialog by rememberSaveable { mutableStateOf<String?>(null) }
-    var showModels by rememberSaveable { mutableStateOf(false) }
-    var showBatch by rememberSaveable { mutableStateOf(false) }
-    var batchPick by remember { mutableStateOf<List<android.net.Uri>>(emptyList()) }
     val batchItems by vm.batch.collectAsStateWithLifecycle()
-    val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
-        if (uris.isNotEmpty()) batchPick = uris
-    }
-    val pickBatch = { multiPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+    val pendingBatch by vm.pendingBatch.collectAsStateWithLifecycle()
     val packs by vm.packs.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    var page by rememberSaveable { mutableStateOf<Page?>(null) }
+
+    // One picker for the front door: one image opens the editor, several set up a batch.
+    val choose = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
+        when {
+            uris.size == 1 -> vm.pick(uris[0])
+            uris.size > 1 -> vm.offerBatch(uris)
+        }
+    }
+    val chooseImages = { choose.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+    val changeOne = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) vm.pick(uri)
+    }
+    val addToBatch = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
+        if (uris.isNotEmpty()) vm.offerBatch(uris)
+    }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importPack(uri)
     }
-
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) vm.pick(uri)
-    }
-    val pickImage = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
 
     // Notification permission is asked for the first time a job starts, not at launch.
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.start() }
@@ -72,18 +93,18 @@ fun RescaleApp(vm: RescaleViewModel) {
         if (Build.VERSION.SDK_INT >= 33) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.start()
     }
 
-    BackHandler(enabled = showModels || showBatch) { showModels = false; showBatch = false }
-    BackHandler(enabled = state.editingMask && !showModels && !showBatch) { vm.cancelMask() }
+    val screen = screenFor(page, job, state)
+    val batchActive = batchItems.any { it.state == BatchItem.State.QUEUED || it.state == BatchItem.State.RUNNING }
 
-    val screen = when {
-        showModels -> Screen.Models
-        showBatch -> Screen.Batch
-        job is JobState.Running -> Screen.Running
-        state.editingMask && state.input?.thumbnail != null -> Screen.Mask
-        job is JobState.Done && !state.resultDismissed -> Screen.Result
-        state.input != null -> Screen.Editor
-        else -> Screen.Home
+    // System back does the same as the arrow in the top bar.
+    val back: (() -> Unit)? = when (screen) {
+        Screen.Settings, Screen.Batch -> ({ page = null })
+        Screen.Mask -> vm::cancelMask
+        Screen.Result -> vm::backToEditor
+        Screen.Editor -> vm::newImage
+        Screen.Home, Screen.Running -> null
     }
+    BackHandler(enabled = back != null) { back?.invoke() }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -95,181 +116,140 @@ fun RescaleApp(vm: RescaleViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                 title = {
                     Text(
                         when (screen) {
-                            Screen.Models -> "Model packs"
+                            Screen.Home -> ""
+                            Screen.Editor -> state.input?.displayName ?: "Your image"
+                            Screen.Running -> "Working"
+                            Screen.Result -> "Result"
+                            Screen.Mask -> "Mark damage"
+                            Screen.Settings -> "Settings"
                             Screen.Batch -> "Batch"
-                            Screen.Mask -> "Repair: mark damage"
-                            else -> "Rescale"
                         },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 },
                 navigationIcon = {
-                    if (screen == Screen.Models || screen == Screen.Batch) {
-                        IconButton(onClick = { showModels = false; showBatch = false }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close model packs")
-                        }
-                    } else if (screen == Screen.Mask) {
-                        IconButton(onClick = vm::cancelMask) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to settings")
-                        }
-                    } else if (screen == Screen.Editor) {
-                        IconButton(onClick = vm::newImage) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to start")
-                        }
-                    } else if (screen == Screen.Result) {
-                        IconButton(onClick = vm::backToEditor) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to settings")
+                    if (back != null) {
+                        IconButton(onClick = back) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     }
                 },
                 actions = {
-                    IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "More options")
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Use CPU only") },
-                            trailingIcon = { Checkbox(checked = state.forceCpu, onCheckedChange = null) },
-                            onClick = { vm.setForceCpu(!state.forceCpu) },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Gentle mode (cooler, slower)") },
-                            trailingIcon = { Checkbox(checked = state.gentle, onCheckedChange = null) },
-                            onClick = { vm.setGentle(!state.gentle) },
-                        )
-                        DropdownMenuItem(text = { Text("Batch queue") }, onClick = {
-                            menuOpen = false; showBatch = true
-                        })
-                        DropdownMenuItem(text = { Text("Model packs") }, onClick = {
-                            menuOpen = false; showModels = true
-                        })
-                        DropdownMenuItem(text = { Text("Model licenses") }, onClick = {
-                            menuOpen = false; dialog = "licenses"
-                        })
-                        DropdownMenuItem(text = { Text("About & privacy") }, onClick = {
-                            menuOpen = false; dialog = "about"
-                        })
+                    if (screen == Screen.Home || screen == Screen.Editor) {
+                        IconButton(onClick = { page = Page.Settings }) {
+                            Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                        }
                     }
                 },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            when (screen) {
-                Screen.Home -> HomeScreen(
-                    loading = state.loadingInput,
-                    error = state.error ?: (job as? JobState.Failed)?.message,
-                    onPick = pickImage,
-                    onBatch = pickBatch,
-                )
-                Screen.Batch -> BatchScreen(
-                    items = batchItems,
-                    onAdd = pickBatch,
-                    onCancel = vm::cancelBatch,
-                    onClear = vm::clearBatch,
-                )
-                Screen.Editor -> EditorScreen(
-                    state = state,
-                    lastJob = job,
-                    onPick = pickImage,
-                    onMode = vm::setMode,
-                    onAuto = vm::useAuto,
-                    onScale = vm::setScale,
-                    onDetail = vm::setDetail,
-                    onColorFix = vm::setColorFix,
-                    onLumaOnly = vm::setLumaOnly,
-                    onToggleStage = vm::toggleStage,
-                    onPro = vm::setPro,
-                    onOpenModels = { showModels = true },
-                    onFinishBicubic = vm::setFinishWithBicubic,
-                    onFaceStrength = vm::setFaceStrength,
-                    onGenerative = vm::setGenerative,
-                    onEditMask = vm::editMask,
-                    batchActive = batchItems.any {
-                        it.state == app.rescale.worker.BatchItem.State.QUEUED || it.state == app.rescale.worker.BatchItem.State.RUNNING
-                    },
-                    onStart = start,
-                    onDismissError = vm::dismissError,
-                )
-                Screen.Running -> RunningScreen(job as JobState.Running, state.input?.thumbnail, vm::cancel)
-                Screen.Mask -> state.input?.let { input ->
-                    MaskEditorScreen(
-                        image = input.thumbnail!!,
-                        detected = input.damage?.mask,
-                        initialStrokes = state.repairStrokes,
-                        initialAutoDetect = state.autoDamage,
-                        onDone = vm::saveMask,
-                        onCancel = vm::cancelMask,
+        AnimatedContent(
+            targetState = screen,
+            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            modifier = Modifier.fillMaxSize().padding(padding),
+            label = "screen",
+        ) { target ->
+            Box(Modifier.fillMaxSize()) {
+                when (target) {
+                    Screen.Home -> HomeScreen(
+                        loading = state.loadingInput,
+                        error = state.error ?: (job as? JobState.Failed)?.message,
+                        batch = batchItems,
+                        onChoose = chooseImages,
+                        onOpenBatch = { page = Page.Batch },
+                    )
+                    Screen.Editor -> EditorScreen(
+                        state = state,
+                        lastJob = job,
+                        batchActive = batchActive,
+                        act = remember(vm) {
+                            EditorActions(
+                                pick = { changeOne.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                mode = vm::setMode,
+                                auto = vm::useAuto,
+                                scale = vm::setScale,
+                                detail = vm::setDetail,
+                                colorFix = vm::setColorFix,
+                                lumaOnly = vm::setLumaOnly,
+                                toggleStage = vm::toggleStage,
+                                pro = vm::setPro,
+                                getPacks = { page = Page.Settings },
+                                finishBicubic = vm::setFinishWithBicubic,
+                                faceStrength = vm::setFaceStrength,
+                                generative = vm::setGenerative,
+                                editMask = vm::editMask,
+                                start = start,
+                                dismissError = vm::dismissError,
+                            )
+                        },
+                    )
+                    Screen.Running -> (job as? JobState.Running)?.let { RunningScreen(it, state.input?.thumbnail, vm::cancel) }
+                    Screen.Mask -> state.input?.thumbnail?.let { thumb ->
+                        MaskEditorScreen(
+                            image = thumb,
+                            detected = state.input?.damage?.mask,
+                            initialStrokes = state.repairStrokes,
+                            initialAutoDetect = state.autoDamage,
+                            onDone = vm::saveMask,
+                            onCancel = vm::cancelMask,
+                        )
+                    }
+                    Screen.Result -> (job as? JobState.Done)?.let { done ->
+                        ResultScreen(
+                            done = done,
+                            before = state.before,
+                            after = state.after,
+                            exportOptions = vm.exportOptions,
+                            exporting = state.exporting,
+                            onSave = { vm.save(done, it) },
+                            onShare = { vm.share(done, it) { intent -> context.startActivity(intent) } },
+                            onNew = vm::newImage,
+                        )
+                    }
+                    Screen.Settings -> SettingsScreen(
+                        forceCpu = state.forceCpu,
+                        gentle = state.gentle,
+                        packs = packs,
+                        published = vm.packsPublished,
+                        deviceRamGb = vm.deviceRamGb,
+                        act = remember(vm) {
+                            SettingsActions(
+                                forceCpu = vm::setForceCpu,
+                                gentle = vm::setGentle,
+                                download = vm::downloadPack,
+                                cancelDownload = vm::cancelDownload,
+                                delete = vm::deletePack,
+                                import = { importer.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                            )
+                        },
+                    )
+                    Screen.Batch -> BatchScreen(
+                        items = batchItems,
+                        onAdd = { addToBatch.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        onCancel = vm::cancelBatch,
+                        onClear = vm::clearBatch,
                     )
                 }
-                Screen.Models -> ModelsScreen(
-                    packs = packs,
-                    published = vm.packsPublished,
-                    onDownload = vm::downloadPack,
-                    onCancel = vm::cancelDownload,
-                    onDelete = vm::deletePack,
-                    onImport = { importer.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
-                    deviceRamGb = vm.deviceRamGb,
-                )
-                Screen.Result -> ResultScreen(
-                    done = job as JobState.Done,
-                    before = state.before,
-                    after = state.after,
-                    exportOptions = vm.exportOptions,
-                    exporting = state.exporting,
-                    onSave = { vm.save(job as JobState.Done, it) },
-                    onShare = { vm.share(job as JobState.Done, it) { intent -> context.startActivity(intent) } },
-                    onNew = vm::newImage,
-                )
             }
         }
     }
 
-    if (batchPick.isNotEmpty()) {
+    if (pendingBatch.isNotEmpty()) {
         BatchSetupSheet(
-            count = batchPick.size,
+            count = pendingBatch.size,
             initialExport = vm.exportOptions,
-            onDismiss = { batchPick = emptyList() },
+            onDismiss = vm::dismissBatch,
             onStart = { scale, export, charging ->
-                vm.startBatch(batchPick, scale, export, charging)
-                batchPick = emptyList()
-                showBatch = true
+                vm.startBatch(pendingBatch, scale, export, charging)
+                page = Page.Batch
             },
         )
     }
-
-    when (dialog) {
-        "licenses" -> InfoDialog("Model licenses", LICENSES_TEXT) { dialog = null }
-        "about" -> InfoDialog("About Rescale", ABOUT_TEXT) { dialog = null }
-    }
 }
-
-@Composable
-private fun InfoDialog(title: String, body: String, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
-        title = { Text(title) },
-        text = { Text(body) },
-    )
-}
-
-private const val LICENSES_TEXT =
-    "Rescale is GPL-3.0. Bundled models:\n\n" +
-        "• realesr-general-x4v3 (photos): BSD-3-Clause, © Xintao Wang (Real-ESRGAN)\n" +
-        "• realesr-animevideov3 x2/x4 (anime & art): BSD-3-Clause, © Xintao Wang (Real-ESRGAN)\n\n" +
-        "Optional packs: FBCNN (Apache-2.0), Real-ESRGAN x4plus (BSD-3-Clause), GFPGAN v1.4 (Apache-2.0), " +
-        "RetinaFace/facexlib (MIT), MI-GAN (MIT, Picsart AI Research), old-photo damage detector " +
-        "(MIT, Microsoft \"Bringing Old Photos Back to Life\"), AdcSR (code Apache-2.0; weights derived from " +
-        "Stable Diffusion 2.1 under CreativeML Open RAIL++-M, with use restrictions).\n\n" +
-        "Runtime: ncnn by Tencent (BSD-3-Clause)."
-
-private const val ABOUT_TEXT =
-    "Rescale upscales and repairs images entirely on your phone. It only goes online when you " +
-        "download a model pack. No accounts, ads, analytics or watermarks.\n\n" +
-        "Upscaling invents plausible detail. It doesn't recover what was never captured, so don't " +
-        "treat results as evidence (faces and text especially).\n\n" +
-        "Source: github.com/EmotionalLeaves/Rescale"

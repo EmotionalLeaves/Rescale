@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Rescale" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Rescale" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
-    <color name="background">#FF101418</color>
-    <color name="ic_background">#FF1B2330</color>
+    <color name="background">#FFFCFAFF</color>
+    <color name="ic_background">#FF0D0E14</color>
 </resources>

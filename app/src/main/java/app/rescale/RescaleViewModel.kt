@@ -217,8 +217,17 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
     val batch: StateFlow<List<BatchItem>> = BatchWorker.observe(app)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    private val _pendingBatch = MutableStateFlow<List<Uri>>(emptyList())
+
+    /** Images chosen (or shared in) for a batch, waiting for the batch setup sheet. */
+    val pendingBatch: StateFlow<List<Uri>> = _pendingBatch.asStateFlow()
+
+    fun offerBatch(uris: List<Uri>) { _pendingBatch.value = uris }
+    fun dismissBatch() { _pendingBatch.value = emptyList() }
+
     /** Copies the picked images into app storage and queues them (Auto settings per image). */
     fun startBatch(uris: List<Uri>, scale: Int, export: ExportOptions, onlyWhileCharging: Boolean) {
+        _pendingBatch.value = emptyList()
         exportOptions = export
         viewModelScope.launch {
             val inputs = withContext(Dispatchers.IO) {

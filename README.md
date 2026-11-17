@@ -13,7 +13,7 @@
 
 > **Honesty note:** upscaling *invents* plausible detail. It doesn't recover detail that was never captured. Don't treat results as evidence, especially faces and text.
 
-## Features (v0.7)
+## Features (v0.9)
 
 - **Repair** (pack): finds scratches, cracks, tears and spots on old photos and fills them in (MI-GAN). A mask editor shows what was found; paint to remove anything else, erase to keep what isn't damage
 - **Generative detail** (pack): AdcSR, a one-step diffusion upscaler, for realistic hair, fur, skin and fabric (slow; Photo mode)
@@ -28,7 +28,8 @@
 - Runs in the **background** with a progress notification (tile *i/N*, ETA, Cancel)
 - **Before/after viewer** with draggable divider, synced pinch-zoom and pan, and double-tap zoom
 - Export as **PNG, JPEG or WebP** (streaming JPEG for huge images), keeping camera EXIF if you want. Location is always stripped
-- **Batch queue**: many images, Auto settings each, saved straight to the gallery
+- **One way in**: choose one image to fine-tune it, or several (or share several to Rescale) for a **batch** with Auto settings per image, saved straight to the gallery
+- Everything that isn't about the current image (model packs, Gentle mode, CPU only, licenses) lives on one **Settings** page
 - **Deep zoom** into the full-resolution result, plus a 1:1 pixel view
 - **Thermal management** and a Gentle mode for long jobs
 - Save to `Pictures/Rescale`, or share. Rescale also appears in the share sheet ("Upscale with Rescale")
