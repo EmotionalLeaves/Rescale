@@ -69,7 +69,7 @@ private class DetailTile(val image: ImageBitmap, val left: Float, val top: Float
  * runs out of pixels, the visible region is decoded from the full-resolution output.
  */
 @Composable
-fun CompareViewer(before: Bitmap?, after: Bitmap, full: File? = null, modifier: Modifier = Modifier) {
+fun CompareViewer(before: Bitmap?, after: Bitmap, modifier: Modifier = Modifier, full: File? = null) {
     val beforeImg = remember(before) { before?.asImageBitmap() }
     val afterImg = remember(after) { after.asImageBitmap() }
     var size by remember { mutableStateOf(IntSize.Zero) }

@@ -36,26 +36,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.rescale.EditorState
 import app.rescale.RescaleViewModel
 import app.rescale.worker.BatchItem
 import app.rescale.worker.JobState
-
-/** Where the user is. Derived from the job and editor state, plus one of two side pages. */
-private enum class Screen { Home, Editor, Running, Result, Mask, Settings, Batch }
-
-/** The two pages you open on purpose; everything else follows from what's happening. */
-private enum class Page { Settings, Batch }
-
-private fun screenFor(page: Page?, job: JobState, state: EditorState): Screen = when {
-    page == Page.Settings -> Screen.Settings
-    page == Page.Batch -> Screen.Batch
-    job is JobState.Running -> Screen.Running
-    state.editingMask && state.input?.thumbnail != null -> Screen.Mask
-    job is JobState.Done && !state.resultDismissed -> Screen.Result
-    state.input != null -> Screen.Editor
-    else -> Screen.Home
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,16 +76,24 @@ fun RescaleApp(vm: RescaleViewModel) {
         if (Build.VERSION.SDK_INT >= 33) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.start()
     }
 
-    val screen = screenFor(page, job, state)
+    val screen = screenFor(
+        page = page,
+        running = job is JobState.Running,
+        done = job is JobState.Done,
+        resultDismissed = state.resultDismissed,
+        editingMask = state.editingMask,
+        hasInput = state.input != null,
+        hasThumbnail = state.input?.thumbnail != null,
+    )
     val batchActive = batchItems.any { it.state == BatchItem.State.QUEUED || it.state == BatchItem.State.RUNNING }
 
     // System back does the same as the arrow in the top bar.
-    val back: (() -> Unit)? = when (screen) {
-        Screen.Settings, Screen.Batch -> ({ page = null })
-        Screen.Mask -> vm::cancelMask
-        Screen.Result -> vm::backToEditor
-        Screen.Editor -> vm::newImage
-        Screen.Home, Screen.Running -> null
+    val back: (() -> Unit)? = when (backFrom(screen)) {
+        BackTo.ClosePage -> ({ page = null })
+        BackTo.CancelMask -> vm::cancelMask
+        BackTo.Editor -> vm::backToEditor
+        BackTo.Home -> vm::newImage
+        null -> null
     }
     BackHandler(enabled = back != null) { back?.invoke() }
 
@@ -119,15 +110,7 @@ fun RescaleApp(vm: RescaleViewModel) {
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                 title = {
                     Text(
-                        when (screen) {
-                            Screen.Home -> ""
-                            Screen.Editor -> state.input?.displayName ?: "Your image"
-                            Screen.Running -> "Working"
-                            Screen.Result -> "Result"
-                            Screen.Mask -> "Mark damage"
-                            Screen.Settings -> "Settings"
-                            Screen.Batch -> "Batch"
-                        },
+                        titleFor(screen, state.input?.displayName),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -140,7 +123,7 @@ fun RescaleApp(vm: RescaleViewModel) {
                     }
                 },
                 actions = {
-                    if (screen == Screen.Home || screen == Screen.Editor) {
+                    if (showsSettings(screen)) {
                         IconButton(onClick = { page = Page.Settings }) {
                             Icon(Icons.Outlined.Settings, contentDescription = "Settings")
                         }

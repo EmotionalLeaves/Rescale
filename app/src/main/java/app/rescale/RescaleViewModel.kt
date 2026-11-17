@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
+import androidx.core.content.edit
+import androidx.core.graphics.createBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.rescale.core.model.Limits
@@ -347,7 +349,7 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
         val k = minOf(1f, 2048f / maxOf(info.width, info.height))
         val w = maxOf(1, (info.width * k).toInt())
         val h = maxOf(1, (info.height * k).toInt())
-        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val bmp = createBitmap(w, h)
         val c = android.graphics.Canvas(bmp)
         for (st in s.repairStrokes) {
             val paint = android.graphics.Paint().apply {
@@ -447,8 +449,10 @@ class RescaleViewModel(app: Application) : AndroidViewModel(app) {
             webpLossless = exportPrefs.getBoolean("lossless", false),
             keepExif = exportPrefs.getBoolean("exif", true),
         )
-        set(o) = exportPrefs.edit().putString("format", o.format.name).putInt("quality", o.quality)
-            .putBoolean("lossless", o.webpLossless).putBoolean("exif", o.keepExif).apply()
+        set(o) = exportPrefs.edit {
+            putString("format", o.format.name).putInt("quality", o.quality)
+                .putBoolean("lossless", o.webpLossless).putBoolean("exif", o.keepExif)
+        }
 
     private fun baseName(done: JobState.Done): String {
         val stem = Gallery.stem(state.value.input?.displayName)

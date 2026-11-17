@@ -100,7 +100,7 @@ jobs:
       - name: Test & build
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --stacktrace :core:model:test :engine:pipeline:testDebugUnitTest assembleRelease 2>&1 | tee build-output.txt
+          ./gradlew --no-daemon --stacktrace :core:model:test :engine:pipeline:testDebugUnitTest :app:testDebugUnitTest assembleRelease 2>&1 | tee build-output.txt
 
       - name: Report failure on the commit
         if: failure() && github.event_name == 'push'
